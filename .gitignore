@@ -1,0 +1,12 @@
+/data/
+/DBoW/sinus_r2d2_descriptors.pkl
+/DBoW/r2d2_descriptors.pkl
+/DBoW/descriptors.pkl
+/DBoW/voc.txt
+/data/
+/experiments/
+/results/
+/g2opy/
+/debug.txt
+/DBoW/r2d2
+__pycache__
