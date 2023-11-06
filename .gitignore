@@ -1,3 +1,4 @@
+/DBoW/
 /data/
 /DBoW/sinus_r2d2_descriptors.pkl
 /DBoW/r2d2_descriptors.pkl
@@ -7,6 +8,7 @@
 /experiments/
 /results/
 /g2opy/
+/trained_models/
 /debug.txt
 /DBoW/r2d2
 __pycache__
