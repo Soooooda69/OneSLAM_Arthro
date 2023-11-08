@@ -37,13 +37,14 @@ def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
 
 
 class Tracking:
-    def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size) -> None:
+    def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA) -> None:
         self.point_resampler = point_resampler
         self.depth_estimator = depth_estimator
         self.tracking_network = tracking_network
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
-
+        self.localBA = BA
+        
     def process_section(self, section_indices, dataset, slam_structure, 
                         sample_new_points=True, 
                         start_frame=0, 
@@ -94,9 +95,17 @@ class Tracking:
                 point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
 
                 point_id = slam_structure.add_point(point_3d, point_color)
+                self.localBA.BA.add_point(point_id, point_3d)
+                
                 new_point_ids.append(point_id)
                 slam_structure.add_correspondence(section_indices[start_frame], point_id, point_2d)
-
+                # If frame_idx is a keyframe, also include corresponce in BA graph
+                if section_indices[start_frame] in slam_structure.keyframes:
+                    edge = self.localBA.BA.add_edge(point_id, section_indices[start_frame], point_2d)
+                    if section_indices[start_frame] not in slam_structure.pose_point_edges.keys():
+                        slam_structure.pose_point_edges[section_indices[start_frame]] = []
+                    slam_structure.pose_point_edges[section_indices[start_frame]].append(edge)
+                
                 kept_pose_points.append((point_id, point_2d))
 
         
@@ -181,6 +190,12 @@ class Tracking:
                 
                 # Add actual point
                 slam_structure.add_correspondence(frame_idx, point_id, tracked_point)
+                # If frame_idx is a keyframe, also include corresponce in BA graph
+                if frame_idx in slam_structure.keyframes:
+                    edge = self.localBA.BA.add_edge(point_id, frame_idx, point_2d)
+                    if frame_idx not in slam_structure.pose_point_edges.keys():
+                        slam_structure.pose_point_edges[frame_idx] = []
+                    slam_structure.pose_point_edges[frame_idx].append(edge)
         
         #breakpoint()
 

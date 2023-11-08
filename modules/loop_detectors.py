@@ -38,7 +38,7 @@ class LoopDetectorBoW(LoopDetectorBase):
         self.L = 3 #depth of tree
 
         # Similiarty threshold to detect as reference frame
-        self.T = 0.91
+        self.T = 0.93
 
         # Minimum distance to count as loop
         self.min_distance = 200

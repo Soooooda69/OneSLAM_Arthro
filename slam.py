@@ -29,7 +29,7 @@ def vecs_to_mat(trans_vec, rot_vec):
 
 
 class SLAMStructure:
-    def __init__(self, dataset, name='', output_folder='./experiments', BA_sparse_solver=True, BA_verbose=False, BA_opt_iters=20) -> None:
+    def __init__(self, dataset, name='', output_folder='./experiments') -> None:
         self.dataset = dataset
         # Internal storage
         self.frames = []
@@ -48,15 +48,6 @@ class SLAMStructure:
         self.valid_points = set() # Points that have been extracted from a BA run
         self.valid_frames = set() # Poses that are localized in the current map
 
-
-        # Bundle adjuster + associated settings
-        self.BA_sparse_solver = BA_sparse_solver
-        self.BA_verbose = BA_verbose
-        self.BA_opt_iters = BA_opt_iters
-
-        self.BA = BundleAdjuster(use_sparse_solver=self.BA_sparse_solver)
-        self.BA.set_verbose(self.BA_verbose)
-
         # Other Settings
         now = datetime.now()
         self.exp_name = now.strftime("exp_%m%d%Y_%H:%M:%S") if name == '' else name
@@ -74,7 +65,7 @@ class SLAMStructure:
         self.poses[frame_idx] = (pose, intrinsics)
         self.pose_point_map[frame_idx] = []
 
-    def make_keyframe(self, frame_idx, image, depth, mask, fixed=False) -> None:
+    def make_keyframe(self, frame_idx, image, depth, mask) -> None:
         # Make an existing frame into a new keyframe
 
         # Assert that frame has been registered and is not already a keyframe
@@ -83,16 +74,16 @@ class SLAMStructure:
 
         # Include frame in bundle adjustment graph
         
-        # Add pose to BA
-        pose, intrinsics = self.poses[frame_idx]
-        self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
+        # # Add pose to BA
+        # pose, intrinsics = self.poses[frame_idx]
+        # self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
         
-        # Add existing correspondences to BA
-        for (point_id, point_2d) in self.pose_point_map[frame_idx]:
-            edge = self.BA.add_edge(point_id, frame_idx, point_2d)
-            if frame_idx not in self.pose_point_edges.keys():
-                self.pose_point_edges[frame_idx] = []
-            self.pose_point_edges[frame_idx].append(edge)
+        # # Add existing correspondences to BA
+        # for (point_id, point_2d) in self.pose_point_map[frame_idx]:
+        #     edge = self.BA.add_edge(point_id, frame_idx, point_2d)
+        #     if frame_idx not in self.pose_point_edges.keys():
+        #         self.pose_point_edges[frame_idx] = []
+        #     self.pose_point_edges[frame_idx].append(edge)
         
 
         # Store additional information for later use (visualization, ...)
@@ -114,7 +105,7 @@ class SLAMStructure:
         # Add point to current map
         # Fix first added point in order to preserve scale
         self.points[point_id] = (point_3d, point_color)
-        self.BA.add_point(point_id, point_3d)
+        # self.BA.add_point(point_id, point_3d)
 
         return point_id
 
@@ -129,23 +120,23 @@ class SLAMStructure:
         for i in range(len(self.pose_point_map[frame_idx])):
             if self.pose_point_map[frame_idx][i][0] == point_id:
                 return
-                if frame_idx in self.keyframes:
-                    edge = self.pose_point_edges[frame_idx][i]
-                    self.BA.update_edge(edge, point_2d)
+                # if frame_idx in self.keyframes:
+                #     edge = self.pose_point_edges[frame_idx][i]
+                #     self.BA.update_edge(edge, point_2d)
                 
-                self.pose_point_map[frame_idx][i] = (point_id, point_2d)
-                return
+                # self.pose_point_map[frame_idx][i] = (point_id, point_2d)
+                # return
         
         # Add new correspondence
         self.pose_point_map[frame_idx].append((point_id, point_2d))
             
         # If frame_idx is a keyframe, also include corresponce in BA graph
 
-        if frame_idx in self.keyframes:
-            edge = self.BA.add_edge(point_id, frame_idx, point_2d)
-            if frame_idx not in self.pose_point_edges.keys():
-                self.pose_point_edges[frame_idx] = []
-            self.pose_point_edges[frame_idx].append(edge)
+        # if frame_idx in self.keyframes:
+        #     edge = self.BA.add_edge(point_id, frame_idx, point_2d)
+        #     if frame_idx not in self.pose_point_edges.keys():
+        #         self.pose_point_edges[frame_idx] = []
+        #     self.pose_point_edges[frame_idx].append(edge)
 
     # Retrieving data
 
@@ -215,91 +206,32 @@ class SLAMStructure:
             self.frames.append(frame_idx)
         return localized_pose
     
-    # def localize_frame(self, frame_idx, update_pose=True):
-    #     # Localize a frame against current map
-    #     assert frame_idx in self.poses.keys()
-    #     pose = np.identity(4)
-    #     intrinsics = self.dataset[frame_idx]['intrinsics']
-    #     K = np.identity(3)
-    #     K[0,0] = intrinsics[0]
-    #     K[0,1] = intrinsics[1]
-    #     K[0,2] = intrinsics[2]
-    #     K[1,2] = intrinsics[3]
-    #     num_points = 1000
-
-    #     query_id = frame_idx
-    #     ref_id = self.keyframes[-1]
-    #     # print('frame_idx:', query_id, 'keyframes:', ref_id)
-    #     ref_img = self.dataset[ref_id]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
-    #     ref_keypoints, ref_des = r2d2.update_image(ref_img, num_points)
-    #     query_img = self.dataset[query_id]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
-    #     query_keypoints, query_des = r2d2.update_image(query_img, num_points)
-    #     # FLANN parameters
-    #     FLANN_INDEX_KDTREE = 1
-    #     index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-    #     search_params = dict(checks=50) # or pass empty dictionary
-    #     flann = cv2.FlannBasedMatcher(index_params,search_params)
-    #     ref_des = np.array(ref_des).astype(np.float32)
-    #     query_des = np.array(query_des).astype(np.float32)
-    #     matches = flann.knnMatch(ref_des, query_des, k=2)
-
-    #     good_matches = []
-    #     for m, n in matches:
-    #         if m.distance < 0.75 * n.distance:
-    #             good_matches.append(m)
-        
-    #     if len(good_matches) < 10:
-    #         print(f'{query_id} and {ref_id} Not enough matches!!!')
-    #         # self.poses[frame_idx] = self.poses[frame_idx-1]
-    #         # self.valid_frames.add(frame_idx)
-    #         # self.frames.append(frame_idx)
-    #         return np.identity(4)
-        
-    #     keypoints1 = ref_keypoints[:,:2]
-    #     keypoints2 = query_keypoints[:,:2]
-    #     keypoints1 = [cv2.KeyPoint(x, y, 1) for x, y in keypoints1]
-    #     keypoints2 = [cv2.KeyPoint(x, y, 1) for x, y in keypoints2]
-    #     ref_keypoints1 = np.float32([keypoints1[m.queryIdx].pt for m in good_matches])
-    #     query_keypoints2 = np.float32([keypoints2[m.trainIdx].pt for m in good_matches])
-
-
-    #     E, mask = cv2.findEssentialMat(query_keypoints2, ref_keypoints1, cameraMatrix=K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
-    #     _, R, t, _ = cv2.recoverPose(E, query_keypoints2, ref_keypoints1, cameraMatrix=K)
-    #     pose[:3, :3] = R
-    #     pose[:3, 3] = t.reshape(3,)
-    #     localized_pose =self.poses[ref_id][0] @ pose
-    #     if update_pose:
-    #         self.poses[query_id] = (localized_pose, intrinsics)
-    #         self.valid_frames.add(query_id)
-    #         self.frames.append(query_id)
-    #     return localized_pose
-    
     # Running bundle adjustment
-    def run_ba(self, opt_iters=None):
-        if opt_iters is not None:
-            self.BA.optimize(opt_iters)
-        else:
-            self.BA.optimize(self.BA_opt_iters)
+    # def run_ba(self, opt_iters=None):
+    #     if opt_iters is not None:
+    #         self.BA.optimize(opt_iters)
+    #     else:
+    #         self.BA.optimize(self.BA_opt_iters)
 
-        self.valid_frames = set()
+    #     self.valid_frames = set()
 
-        self.extract_ba_data(self.BA)
+    #     self.extract_ba_data(self.BA)
 
-    def extract_ba_data(self, BA_instance):
+    # def extract_ba_data(self, BA_instance):
 
 
-        for keyframe in self.keyframes:
-            _, intrinsics = self.poses[keyframe]
-            self.poses[keyframe] = (BA_instance.get_pose(keyframe).matrix(), intrinsics)
+    #     for keyframe in self.keyframes:
+    #         _, intrinsics = self.poses[keyframe]
+    #         self.poses[keyframe] = (BA_instance.get_pose(keyframe).matrix(), intrinsics)
             
-            self.valid_frames.add(keyframe)
+    #         self.valid_frames.add(keyframe)
 
 
-        for point_id in self.points.keys():
-            _, point_color = self.points[point_id]
-            self.points[point_id] = (BA_instance.get_point(point_id), point_color)
+    #     for point_id in self.points.keys():
+    #         _, point_color = self.points[point_id]
+    #         self.points[point_id] = (BA_instance.get_point(point_id), point_color)
             
-            self.valid_points.add(point_id)
+    #         self.valid_points.add(point_id)
 
     
 

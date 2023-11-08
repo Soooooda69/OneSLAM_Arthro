@@ -94,3 +94,45 @@ class BundleAdjuster(g2o.SparseOptimizer):
     
     def fix_point(self, point_id, fixed=True):
         self.vertex(point_id * 2 + 1).set_fixed(fixed)
+
+
+class LocalBA(object):
+    def __init__(self, slam_structure, BA_sparse_solver, BA_opt_iters, BA_verbose):
+
+        # Bundle adjuster + associated settings
+        self.BA_sparse_solver = BA_sparse_solver
+        self.BA_verbose = BA_verbose
+        self.BA_opt_iters = BA_opt_iters
+        self.BA = BundleAdjuster(use_sparse_solver=self.BA_sparse_solver)
+        self.BA.set_verbose(self.BA_verbose)
+        self.slam_sturcture = slam_structure
+        
+    def set_frame_data(self, frame_idx, fixed):
+        pose, intrinsics = self.slam_sturcture.poses[frame_idx]
+        self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
+        
+        # Add existing correspondences to BA
+        for (point_id, point_2d) in self.slam_sturcture.pose_point_map[frame_idx]:
+            edge = self.BA.add_edge(point_id, frame_idx, point_2d)
+            if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
+                self.slam_sturcture.pose_point_edges[frame_idx] = []
+            self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
+    
+    def run_ba(self, opt_iters=None):
+        if opt_iters is not None:
+            self.BA.optimize(opt_iters)
+        else:
+            self.BA.optimize(self.BA_opt_iters)
+        self.valid_frames = set()
+        self.extract_ba_data()
+    
+    def extract_ba_data(self):
+        for keyframe in self.slam_sturcture.keyframes:
+            _, intrinsics = self.slam_sturcture.poses[keyframe]
+            self.slam_sturcture.poses[keyframe] = (self.BA.get_pose(keyframe).matrix(), intrinsics)      
+            self.valid_frames.add(keyframe)
+
+        for point_id in self.slam_sturcture.points.keys():
+            _, point_color = self.slam_sturcture.points[point_id]
+            self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
+            self.slam_sturcture.valid_points.add(point_id)

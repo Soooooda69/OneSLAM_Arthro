@@ -1,7 +1,7 @@
 
 from datasets.dataset import ImageDataset
 from datasets.transforms import *
-
+from optimizers import LocalBA
 from slam import SLAMStructure
 from tracking import Tracking
 from modules.depth_estimation import *
@@ -9,7 +9,9 @@ from modules.pose_guessing import *
 from modules.point_resampling import *
 from modules.loop_detectors import *
 from cotracker.predictor import CoTrackerPredictor
-from loop_closure_test import *
+from modules.loop_closure_test import *
+from modules.keyframe_select import *
+from modules.mapping import *
 
 import torch
 import torchvision.transforms as transforms
@@ -159,13 +161,17 @@ if args.process_subset:
 
 
     
-
-print("Number of frames to process: ", len(dataset))
+if args.start_idx and args.end_idx:
+    print("Number of frames to process: ", args.end_idx - args.start_idx + 1)
+else:
+    print("Number of frames to process: ", len(dataset))
 
 # Create SLAM structure (data storage + bundle adjustment)
+
 # TODO: Seperate data storage and bundle adjustment
-slam_structure = SLAMStructure(dataset, name=args.name, output_folder=args.output_folder,
-                               BA_sparse_solver=not args.dense_ba, BA_verbose=args.verbose_ba, BA_opt_iters=args.tracking_ba_iterations)
+slam_structure = SLAMStructure(dataset, name=args.name, output_folder=args.output_folder)
+# Create LocalBA object for bundle adjustment
+localBA = LocalBA(slam_structure, BA_sparse_solver=not args.dense_ba, BA_opt_iters=args.tracking_ba_iterations, BA_verbose=args.verbose_ba)
 
 ##################################################
 # Load tracking module and associated components #
@@ -217,10 +223,16 @@ cotracker = CoTrackerPredictor(checkpoint="./trained_models/cotracker/"+args.cot
 cotracker.eval()
 
 # Create tracking module
-tracking_module = Tracking(depth_estimator, point_sampler, cotracker, args.target_device, cotracker_window_size = args.cotracker_window_size)
+tracking_module = Tracking(depth_estimator, point_sampler, cotracker, args.target_device, cotracker_window_size = args.cotracker_window_size, BA=localBA)
 
 # Create loop closure module
 loop_close_module = LoopClosureR2D2(cotracker, slam_structure, dataset, args.start_idx, args.end_idx)
+
+# Keyframe selection module
+keyframe_module = KeyframeSelectSubsample(dataset, depth_estimator, slam_structure, localBA, args.keyframe_subsample)
+
+# Mapping module
+mapping_module = mapping(slam_structure, localBA, args.point_resample_cooldown)
 
 #############################
 # Running the SLAM pipeline #
@@ -258,7 +270,7 @@ total_update_time = 0
 
 # Main SLAM loop
 for frame_idx in tqdm(frames_to_process):
-    # # detect loops for each frame
+    # detect loops for each frame
     # loop = loop_close_module.close_loops(frame_idx) 
     # if loop is not None and loop[0] in slam_structure.keyframes:
     #     current_keyframes.append(frame_idx)
@@ -269,12 +281,12 @@ for frame_idx in tqdm(frames_to_process):
     # Special case for first iteration
     if len(slam_structure.poses.keys()) == 0:
         # Retrieve data to add frame and make into keyframe
-        image = dataset[frame_idx]['image'].detach().cpu().numpy()
-        depth = depth_estimator(dataset[frame_idx]['image'], dataset[frame_idx]['mask']).squeeze().detach().cpu().numpy()
+        # image = dataset[frame_idx]['image'].detach().cpu().numpy()
+        # depth = depth_estimator(dataset[frame_idx]['image'], dataset[frame_idx]['mask']).squeeze().detach().cpu().numpy()
         intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
-        mask = dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
-        mask[depth < 1e-6] = 0
-
+        # mask = dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
+        # mask[depth < 1e-6] = 0
+        
         # Get new estimate for poses
         if args.pose_guesser == 'gt_pose':
             pose = pose_guesser(frame_idx)
@@ -283,8 +295,10 @@ for frame_idx in tqdm(frames_to_process):
 
         # Add first frame and make into keyframe
         slam_structure.add_frame(frame_idx, pose, intrinsics)
-        slam_structure.make_keyframe(frame_idx, image, depth, mask, fixed=True)
-        keyframe_cooldown = args.keyframe_subsample
+        # slam_structure.make_keyframe(frame_idx, image, depth, mask)
+        # localBA.set_frame_data(frame_idx, True)
+        # keyframe_cooldown = args.keyframe_subsample
+        keyframe_module.run(frame_idx)
     else:
         # Retrieve data to add new frame
         intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
@@ -296,7 +310,9 @@ for frame_idx in tqdm(frames_to_process):
 
         # Add new frame
         slam_structure.add_frame(frame_idx, pose, intrinsics)
-
+        
+        # keyframe_module.run(frame_idx)
+        
     ###########################################################################################################
     #                                                   localization                                          #
     ###########################################################################################################
@@ -362,6 +378,7 @@ for frame_idx in tqdm(frames_to_process):
     #                                                   Mapping                                               #
     ###########################################################################################################
     
+    
     # New mapping counter starts
     mapping_start_time = time.time()
 
@@ -369,9 +386,10 @@ for frame_idx in tqdm(frames_to_process):
 
     # Remove all existing correspondences (likely to be faulty),
     # except for frist frame
-    for idx in current_section[1:]:
-        assert idx not in slam_structure.keyframes
-        slam_structure.pose_point_map[idx] = []
+    mapping_module.remove_correspondences(current_section)
+    # for idx in current_section[1:]:
+    #     assert idx not in slam_structure.keyframes
+    #     slam_structure.pose_point_map[idx] = []
 
     # Update point resample cooldown
     point_resample_cooldown -= 1
@@ -379,6 +397,7 @@ for frame_idx in tqdm(frames_to_process):
     # Obtain new consistent set of point correspondences
     # Track the points throughout the section, keep only covisible points
     section_to_track = np.copy(current_section)
+    # update correspondences for each frame to slam_structure
     tracking_module.process_section(section_to_track, dataset, slam_structure, 
                                     sample_new_points=(point_resample_cooldown<=0), 
                                     start_frame=0,
@@ -391,67 +410,26 @@ for frame_idx in tqdm(frames_to_process):
         point_resample_cooldown = args.point_resample_cooldown
 
     # Decide to make frames into new keyframes
-    new_keyframe_counter = 0
     for idx in current_section[1:]:
         # Keyframe decision
-
-        make_keyframe = False
-        
-        if args.keyframe_decision == "subsample":
-            keyframe_cooldown -= 1
-            if keyframe_cooldown <= 0:
-                keyframe_cooldown = args.keyframe_subsample
-                make_keyframe = True
-
-        if args.keyframe_decision == "orb":
-            keyframe_cooldown -= 1
-            if keyframe_cooldown <= 0:
-                # Check if last keyframe was old
-                make_keyframe = True
-            else:
-                last_keyframe = slam_structure.keyframes[-1]
-                last_pose_points =  slam_structure.pose_point_map[last_keyframe]
-                last_point_ids = set()
-                for (point_id, point_2d) in last_pose_points: last_point_ids.add(point_id)
-
-                current_pose_points = slam_structure.pose_point_map[idx]
-
-                tracked_point_ids = set()
-                for (point_id, point_2d) in current_pose_points:
-                    if point_id in last_point_ids: tracked_point_ids.add(point_id)
-                
-                if len(tracked_point_ids)/len(last_point_ids) < 0.8:
-                    make_keyframe = True
-
-            if make_keyframe:
-                keyframe_cooldown = orb_keyframe_cooldown
-
-        if not make_keyframe:
-            continue
-
-        # Frame was chooses to be a keyframe
-
-        image = dataset[idx]['image'].detach().cpu().numpy()
-        depth = depth_estimator(dataset[idx]['image'], dataset[idx]['mask']).squeeze().detach().cpu().numpy()
-        mask = dataset[idx]['mask'].squeeze().detach().cpu().numpy()
-        mask[depth < 1e-6] = 0
-
-        slam_structure.make_keyframe(idx, image, depth, mask, fixed=False)
-        new_keyframe_counter += 1
+        # if decided update to localBA and add to slam_structure
+        keyframe_module.run(idx)
        
         # TODO for after paper: Add loop closure here
 
     # If there are new keyframes, run local BA
-    if new_keyframe_counter > 0:
-        for idx in slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]:
-            slam_structure.BA.fix_pose(idx, fixed=True)
-        for idx in slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]:
-            slam_structure.BA.fix_pose(idx, fixed=False)
-        slam_structure.BA.fix_pose(slam_structure.keyframes[0], fixed=True)
-        print('local BA start................................')
-        # print(f'fix: {slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]}')
-        # print(f'unfix: {slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]}')
-        slam_structure.run_ba(opt_iters=args.tracking_ba_iterations)
+    if keyframe_module.new_keyframe_counter > 0:
+        #TODO:local BA logical adjust 
+        mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, keyframe_module.new_keyframe_counter)
+        # for idx in slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]:
+        #     localBA.BA.fix_pose(idx, fixed=True)
+        # for idx in slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]:
+        #     localBA.BA.fix_pose(idx, fixed=False)
+        # localBA.BA.fix_pose(slam_structure.keyframes[0], fixed=True)
+        # print('local BA start................................')
+        # # print(f'fix: {slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]}')
+        # # print(f'unfix: {slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]}')
+        # localBA.run_ba(opt_iters=args.tracking_ba_iterations)
 
     # Mapping done
     current_time = time.time()
