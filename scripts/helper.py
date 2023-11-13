@@ -58,7 +58,7 @@ class Helper:
         image_files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
 
         # Sort the image files based on their names (assuming they are named in order)
-        image_files.sort()
+        image_files = natsorted(image_files)
 
         # Get the first image to determine the frame size
         first_image = cv2.imread(os.path.join(image_dir, image_files[0]))
@@ -76,3 +76,7 @@ class Helper:
 
         # Release the VideoWriter
         out.release()
+
+if __name__ == "__main__":
+    helper = Helper()
+    helper.make_video('../datasets/temp_data/localize_tracking','../datasets/temp_data/localize_tracking/tracking.mp4', 15)

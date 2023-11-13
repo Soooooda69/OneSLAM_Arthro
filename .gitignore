@@ -11,4 +11,5 @@
 /trained_models/
 /debug.txt
 /DBoW/r2d2
+/logfile.txt
 __pycache__

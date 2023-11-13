@@ -10,7 +10,7 @@ class mapping:
         # except for frist frame
         for idx in current_section[1:]:
             # print(f'removing correspondences for frame {idx}', current_section)
-            assert idx not in self.slam_structure.keyframes
+            # assert idx not in self.slam_structure.keyframes
             self.slam_structure.pose_point_map[idx] = []
 
     def local_BA(self, local_ba_size, tracking_ba_iterations, new_keyframe_counter):
@@ -24,3 +24,9 @@ class mapping:
         # print(f'fix: {slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]}')
         # print(f'unfix: {slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]}')
         self.localBA.run_ba(opt_iters=tracking_ba_iterations)
+    
+    # def covisible(self):
+    #     for idx in self.slam_structure.keyframes:
+    #         points = self.slam_structure.pose_point_map[idx]
+    #         print(f'covisible for frame {idx}', points)
+    #         # print(self.slam_structure.covisible_frames[idx])

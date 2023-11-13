@@ -1,6 +1,9 @@
 import torch
 import numpy as np
 import time
+import cv2
+import logging
+logger = logging.getLogger(__name__)
 
 # TODO: Rename this to point tracking for more clarity.
 
@@ -34,7 +37,21 @@ def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
 
     return points_3d
 
+def vis_tracking(image_torch, tracked_points):
 
+        image = image_torch.permute(1, 2, 0).detach().cpu().numpy()*255
+        image = image.astype(np.uint8)
+        img = image.copy()
+        for tracked_point in tracked_points:
+            coord = (int(tracked_point[0]), int(tracked_point[1]))
+            cv2.circle(
+                            img,
+                            coord,
+                            3,
+                            color=[25, 255, 20],
+                            thickness=-1
+                        )
+        return img
 
 class Tracking:
     def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA) -> None:
@@ -44,7 +61,18 @@ class Tracking:
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
         self.localBA = BA
-        
+    
+    def update_Keyframe_Correspondence(self, slam_structure, frame_idx, point_id, point_2d):
+        slam_structure.add_correspondence(frame_idx, point_id, point_2d)
+        # If frame_idx is a keyframe, also include corresponce in BA graph
+        if frame_idx in slam_structure.keyframes:
+            # logger.info(f"Adding new point to BA graph {point_id} Tracking {frame_idx}...adding new")
+            edge_id = len(self.localBA.BA.edge_info)
+            edge = self.localBA.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
+            if frame_idx not in slam_structure.pose_point_edges.keys():
+                slam_structure.pose_point_edges[frame_idx] = []
+            slam_structure.pose_point_edges[frame_idx].append(edge)
+            
     def process_section(self, section_indices, dataset, slam_structure, 
                         sample_new_points=True, 
                         start_frame=0, 
@@ -55,10 +83,10 @@ class Tracking:
 
         # Pad section to atleast five frames
         section_valid = [True for idx in section_indices]
+        # print('section indices:',section_indices, type(section_indices))
         while len(section_indices) < (self.cotracker_window_size//2) + 1:
             section_indices.append(section_indices[-1])
             section_valid.append(False)
-
 
         # Retrieve section data
         samples = []
@@ -98,13 +126,16 @@ class Tracking:
                 self.localBA.BA.add_point(point_id, point_3d)
                 
                 new_point_ids.append(point_id)
-                slam_structure.add_correspondence(section_indices[start_frame], point_id, point_2d)
-                # If frame_idx is a keyframe, also include corresponce in BA graph
-                if section_indices[start_frame] in slam_structure.keyframes:
-                    edge = self.localBA.BA.add_edge(point_id, section_indices[start_frame], point_2d)
-                    if section_indices[start_frame] not in slam_structure.pose_point_edges.keys():
-                        slam_structure.pose_point_edges[section_indices[start_frame]] = []
-                    slam_structure.pose_point_edges[section_indices[start_frame]].append(edge)
+                
+                self.update_Keyframe_Correspondence(slam_structure, section_indices[start_frame], point_id, point_2d)
+                # slam_structure.add_correspondence(section_indices[start_frame], point_id, point_2d)
+                # # If frame_idx is a keyframe, also include corresponce in BA graph
+                # if section_indices[start_frame] in slam_structure.keyframes:
+                #     logger.info(f"Adding new point to BA graph {point_id} Tracking {section_indices[start_frame]}...adding new")
+                #     edge = self.localBA.BA.add_edge(point_id, section_indices[start_frame], point_2d)
+                #     if section_indices[start_frame] not in slam_structure.pose_point_edges.keys():
+                #         slam_structure.pose_point_edges[section_indices[start_frame]] = []
+                #     slam_structure.pose_point_edges[section_indices[start_frame]].append(edge)
                 
                 kept_pose_points.append((point_id, point_2d))
 
@@ -161,7 +192,8 @@ class Tracking:
             mask = samples[local_idx]['mask'].squeeze().detach().cpu().numpy()
             H, W = mask.shape
 
-
+            # Use to visualize tracking
+            tracked_points = []
             # Add new correspondences
             for i in range(len(local_point_ids)):
                 # Retrieve point data
@@ -190,13 +222,21 @@ class Tracking:
                 
                 # Add actual point
                 slam_structure.add_correspondence(frame_idx, point_id, tracked_point)
-                # If frame_idx is a keyframe, also include corresponce in BA graph
-                if frame_idx in slam_structure.keyframes:
-                    edge = self.localBA.BA.add_edge(point_id, frame_idx, point_2d)
-                    if frame_idx not in slam_structure.pose_point_edges.keys():
-                        slam_structure.pose_point_edges[frame_idx] = []
-                    slam_structure.pose_point_edges[frame_idx].append(edge)
-        
+                
+                # # If frame_idx is a keyframe, also include corresponce in BA graph
+                # if frame_idx in slam_structure.keyframes:
+                #     logger.info(f"Adding new point to BA graph {point_id} Tracking {frame_idx}...after")
+                #     edge = self.localBA.BA.add_edge(point_id, frame_idx, point_2d)
+                #     if frame_idx not in slam_structure.pose_point_edges.keys():
+                #         slam_structure.pose_point_edges[frame_idx] = []
+                #     slam_structure.pose_point_edges[frame_idx].append(edge)
+                
+                # Add to tracked points
+                tracked_points.append(tracked_point)
+            # Visualize tracking
+            if sample_new_points:
+                img = vis_tracking(samples[local_idx]['image'], tracked_points)
+                cv2.imwrite(f'../datasets/temp_data/localize_tracking/{frame_idx}.png', img)
         #breakpoint()
 
         # Point tracking done

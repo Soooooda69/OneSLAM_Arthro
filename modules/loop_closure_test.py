@@ -26,7 +26,9 @@ class LoopClosureR2D2:
 		self.tree, self.matcher = self.r2d2_init(self.img_dict)
 		self.vis_save_path = '../datasets/temp_data/loop_detect'
 		remake_vis_dir(self.vis_save_path)
-	
+		# self.loops = []
+		# self.num_loops = 0
+  
 	def r2d2_init(self, org_img_dict):
 
 		K = 5 #classes of cluster
@@ -87,7 +89,7 @@ class LoopClosureR2D2:
 		else:
 			return False, []
 
-	def close_loops(self, frame_idx):
+	def find_loops(self, frame_idx):
 		found_loop, loop = self.r2d2_loop_detect(frame_idx)
 		if found_loop:
 			return loop 
@@ -140,6 +142,7 @@ class LoopClosureR2D2:
 				_, R, t, _ = cv2.recoverPose(E, query_keypoints2, ref_keypoints1, cameraMatrix=K)
 			pose[:3, :3] = R
 			pose[:3, 3] = t.reshape(3,)
-   
+			##
+			pose = np.identity(4)
 			loop_mes_list.append([ref_id, query_id, pose])
 		return loop_mes_list

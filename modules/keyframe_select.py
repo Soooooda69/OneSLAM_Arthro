@@ -17,8 +17,7 @@ class KeyframeSelect(ABC):
         return []
     
     def setKeyframe(self, idx):
-        self.make_keyframe = False
-        # Frame was chooses to be a keyframe
+        # Update keyframe in slam_structure and localBA
         image = self.dataset[idx]['image'].detach().cpu().numpy()
         depth = self.depth_estimator(self.dataset[idx]['image'], self.dataset[idx]['mask']).squeeze().detach().cpu().numpy()
         mask = self.dataset[idx]['mask'].squeeze().detach().cpu().numpy()
@@ -32,6 +31,7 @@ class KeyframeSelect(ABC):
         if self.make_keyframe:
             print('keyframe:', idx)
             self.setKeyframe(idx)
+            self.make_keyframe = False
     
 class KeyframeSelectSubsample(KeyframeSelect):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA, keyframe_subsample) -> None:
@@ -49,6 +49,7 @@ class KeyframeSelectFeature(KeyframeSelect):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA) -> None:
         super().__init__(dataset, depth_estimator, slam_structure, localBA)
         self.feature_keyframe_cooldown = 4
+        self.similar_threshold = 0.90
         
     def decide_keyframe(self, idx):
         self.keyframe_cooldown -= 1
@@ -67,8 +68,22 @@ class KeyframeSelectFeature(KeyframeSelect):
             for (point_id, point_2d) in current_pose_points:
                 if point_id in last_point_ids: tracked_point_ids.add(point_id)
             
-            if len(tracked_point_ids)/len(last_point_ids) < 0.8:
+            # print(f'jaccard_similarity between{idx}, {last_keyframe}:',self.jaccard_similarity(tracked_point_ids, last_point_ids))
+            # if len(tracked_point_ids)/len(last_point_ids) < 0.8:
+            if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold:
                 self.make_keyframe = True
 
         if self.make_keyframe:
             self.keyframe_cooldown = self.feature_keyframe_cooldown
+    
+    def jaccard_similarity(self, set1, set2):
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        return intersection / union if union != 0 else 0
+    
+    def run(self, idx):
+        self.decide_keyframe(idx)
+        if self.make_keyframe:
+            print('keyframe:', idx)
+            self.setKeyframe(idx)
+            self.make_keyframe = False

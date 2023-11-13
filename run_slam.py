@@ -2,7 +2,7 @@
 from datasets.dataset import ImageDataset
 from datasets.transforms import *
 from optimizers import LocalBA
-from slam import SLAMStructure
+from slamStructure import SLAMStructure
 from tracking import Tracking
 from modules.depth_estimation import *
 from modules.pose_guessing import *
@@ -302,11 +302,7 @@ for frame_idx in tqdm(frames_to_process):
     else:
         # Retrieve data to add new frame
         intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
-        
-        if args.pose_guesser == 'gt_pose':
-            pose = pose_guesser(frame_idx)
-        else:
-            pose = pose_guesser(last_poses)
+        pose = pose_guesser(last_poses)
 
         # Add new frame
         slam_structure.add_frame(frame_idx, pose, intrinsics)
@@ -330,7 +326,9 @@ for frame_idx in tqdm(frames_to_process):
             # print(".......Section to track: ", section_to_track)
             # print(".......Start frame: ", start_frame)
             if args.verbose:
+                print("Tracking frame: ", frame_idx)
                 print("Current section: ", current_section)
+                print("Section to track: ", section_to_track)
                 print("Tracking start index: ", section_to_track[start_frame])
 
             tracking_module.process_section(section_to_track, dataset, slam_structure, 
@@ -387,28 +385,24 @@ for frame_idx in tqdm(frames_to_process):
     # Remove all existing correspondences (likely to be faulty),
     # except for frist frame
     mapping_module.remove_correspondences(current_section)
-    # for idx in current_section[1:]:
-    #     assert idx not in slam_structure.keyframes
-    #     slam_structure.pose_point_map[idx] = []
 
-    # Update point resample cooldown
-    point_resample_cooldown -= 1
+    # # Update point resample cooldown
+    # point_resample_cooldown -= 1
 
     # Obtain new consistent set of point correspondences
     # Track the points throughout the section, keep only covisible points
     section_to_track = np.copy(current_section)
     # update correspondences for each frame to slam_structure
     tracking_module.process_section(section_to_track, dataset, slam_structure, 
-                                    sample_new_points=(point_resample_cooldown<=0), 
                                     start_frame=0,
                                     maximum_track_num=args.tracked_point_num_max)
     # for i in range(len(section_to_track)):
     #     print(f'frame {section_to_track[i]} kept points num:', len(slam_structure.pose_point_map[section_to_track[i]]))
         
-    # Update point resample cooldown
-    if point_resample_cooldown <=0:
-        point_resample_cooldown = args.point_resample_cooldown
-
+    # # Update point resample cooldown
+    # if point_resample_cooldown <=0:
+    #     point_resample_cooldown = args.point_resample_cooldown
+    
     # Decide to make frames into new keyframes
     for idx in current_section[1:]:
         # Keyframe decision
@@ -421,15 +415,6 @@ for frame_idx in tqdm(frames_to_process):
     if keyframe_module.new_keyframe_counter > 0:
         #TODO:local BA logical adjust 
         mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, keyframe_module.new_keyframe_counter)
-        # for idx in slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]:
-        #     localBA.BA.fix_pose(idx, fixed=True)
-        # for idx in slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]:
-        #     localBA.BA.fix_pose(idx, fixed=False)
-        # localBA.BA.fix_pose(slam_structure.keyframes[0], fixed=True)
-        # print('local BA start................................')
-        # # print(f'fix: {slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]}')
-        # # print(f'unfix: {slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]}')
-        # localBA.run_ba(opt_iters=args.tracking_ba_iterations)
 
     # Mapping done
     current_time = time.time()

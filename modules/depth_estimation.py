@@ -27,7 +27,7 @@ class DepthEstimatorBase(ABC):
         return None
 
 class DepthEstimatorConstant(DepthEstimatorBase):
-    def __init__(self, multiplier=10) -> None:
+    def __init__(self, multiplier=1) -> None:
         super().__init__()
         self.multiplier = multiplier
 
