@@ -9,6 +9,7 @@ class KeyframeSelect(ABC):
         self.localBA = localBA
         self.keyframe_cooldown = 0
         self.new_keyframe_counter = 0
+        self.new_keyframes = []
         self.make_keyframe = False
         
     @abstractmethod
@@ -25,11 +26,17 @@ class KeyframeSelect(ABC):
         self.slam_structure.make_keyframe(idx, image, depth, mask)   
         self.localBA.set_frame_data(idx, fixed=False)
         self.new_keyframe_counter += 1
-
+        self.new_keyframes.append(idx)
+        print('keyframe:', idx)
+        
+    def resetNewKeyframeCounter(self):
+        self.new_keyframe_counter = 0
+        self.new_keyframes = []
+       
     def run(self, idx):
         self.decide_keyframe()
         if self.make_keyframe:
-            print('keyframe:', idx)
+            # print('keyframe:', idx)
             self.setKeyframe(idx)
             self.make_keyframe = False
     
@@ -48,7 +55,7 @@ class KeyframeSelectSubsample(KeyframeSelect):
 class KeyframeSelectFeature(KeyframeSelect):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA) -> None:
         super().__init__(dataset, depth_estimator, slam_structure, localBA)
-        self.feature_keyframe_cooldown = 4
+        self.feature_keyframe_cooldown = 400
         self.similar_threshold = 0.90
         
     def decide_keyframe(self, idx):
@@ -84,6 +91,6 @@ class KeyframeSelectFeature(KeyframeSelect):
     def run(self, idx):
         self.decide_keyframe(idx)
         if self.make_keyframe:
-            print('keyframe:', idx)
+            # print('keyframe:', idx)
             self.setKeyframe(idx)
             self.make_keyframe = False

@@ -282,18 +282,18 @@ class PointResamplerR2D2(PointResamplerBase):
         self.num_points = 2000
         
     def __call__(self, current_pose_points, image, depth, intrinsics, mask, slam_structure):
-        points = []
         points_to_sample = max(self.min_num_points - len(current_pose_points), self.min_new_points)
-        if len(current_pose_points) > self.max_num_points:
-            points_to_sample = 0
+        if len(current_pose_points) >= self.min_num_points:
+            return current_pose_points, None, None
         
         image = np.transpose(image, (1, 2, 0))*255
         image = image.astype(np.uint8)
 
 
-        new_2d_points, _ = sample_r2d2_features(image, mask, self.num_points)
-        new_2d_points = new_2d_points[np.random.choice(len(new_2d_points), points_to_sample, replace=False)]
+        new_2d_points, new_points_descriptor = sample_r2d2_features(image, mask, self.num_points)
+        # new_2d_points = new_2d_points[np.random.choice(len(new_2d_points), points_to_sample, replace=False)]
+        new_2d_points = new_2d_points[:points_to_sample]
         
-        return current_pose_points, new_2d_points
+        return current_pose_points, new_2d_points, new_points_descriptor
     
         

@@ -17,16 +17,20 @@ class mapping:
          # If there are new keyframes, run local BA
         for idx in self.slam_structure.keyframes[:-(local_ba_size+new_keyframe_counter)]:
             self.localBA.BA.fix_pose(idx, fixed=True)
+            # for (point_id,_) in self.slam_structure.pose_point_map[idx]:
+            #     self.localBA.BA.fix_point(point_id, fixed=True)
         for idx in self.slam_structure.keyframes[-(local_ba_size+new_keyframe_counter):]:
             self.localBA.BA.fix_pose(idx, fixed=False)
+            # for (point_id,_) in self.slam_structure.pose_point_map[idx]:
+            #     self.localBA.BA.fix_point(point_id, fixed=False)
         self.localBA.BA.fix_pose(self.slam_structure.keyframes[0], fixed=True)
-        # print('local BA start................................')
+        print('local BA start......')
         # print(f'fix: {slam_structure.keyframes[:-(args.local_ba_size+new_keyframe_counter)]}')
         # print(f'unfix: {slam_structure.keyframes[-(args.local_ba_size+new_keyframe_counter):]}')
-        self.localBA.run_ba(opt_iters=tracking_ba_iterations)
-    
-    # def covisible(self):
-    #     for idx in self.slam_structure.keyframes:
-    #         points = self.slam_structure.pose_point_map[idx]
-    #         print(f'covisible for frame {idx}', points)
-    #         # print(self.slam_structure.covisible_frames[idx])
+        
+        # Remove bad measurements
+        self.localBA.run_ba(opt_iters=10)
+        bad_measurements = self.localBA.get_bad_measurements()
+        self.localBA.run_ba(opt_iters=10)
+        # bad_measurements = self.localBA.get_bad_measurements()
+        return bad_measurements

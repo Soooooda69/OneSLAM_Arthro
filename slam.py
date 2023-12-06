@@ -47,7 +47,7 @@ class SLAM:
         self.cotracker = CoTrackerPredictor(checkpoint="./trained_models/cotracker/"+args.cotracker_model+".pth").to(device=args.target_device)
         self.cotracker.eval()
         # Create tracking module
-        self.tracking_module = Tracking(self.depth_estimator, self.point_sampler, self.cotracker, args.target_device, cotracker_window_size = args.cotracker_window_size, BA=self.localBA)
+        self.tracking_module = Tracking(self.depth_estimator, self.point_sampler, self.cotracker, args.target_device, args.cotracker_window_size, self.localBA, self.dataset)
         # Create loop closure module
         self.loop_close_module = LoopClosureR2D2(self.cotracker, self.slam_structure, self.dataset, args.start_idx, args.end_idx)
         # Keyframe selection module
@@ -75,23 +75,26 @@ class SLAM:
         self.need_sample = False
         
     def initialize(self):
+        print('Initializing map ...')
         for frame_idx in frames_to_process:
             last_poses = self.slam_structure.get_previous_poses(10)
-            if len(slam.slam_structure.poses.keys()) == 0:
-                intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
+            # if len(self.slam_structure.poses.keys()) == 0:
+            #     intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
                 
-                pose = slam.pose_guesser(last_poses)
+            #     pose = self.pose_guesser(last_poses)
 
-                # Add first frame and make into keyframe
-                slam.slam_structure.add_frame(frame_idx, pose, intrinsics)
-                slam.keyframe_module.run(frame_idx)
-            else:
-                # Retrieve data to add new frame
-                intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
-                pose = slam.pose_guesser(last_poses)
+            #     # Add first frame and make into keyframe
+            #     self.slam_structure.add_frame(frame_idx, pose, intrinsics)
+            #     self.keyframe_module.run(frame_idx)
+            #     self.keyframe_module.keyframe_cooldown = 0
+            #     self.keyframe_module.new_keyframe_counter = 0
+            # else:
+            # Retrieve data to add new frame
+            intrinsics = dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
+            pose = self.pose_guesser(last_poses)
 
-                # Add new frame
-                slam.slam_structure.add_frame(frame_idx, pose, intrinsics)
+            # Add new frame
+            self.slam_structure.add_frame(frame_idx, pose, intrinsics)
 
             
             # Add frame to current section
@@ -100,13 +103,38 @@ class SLAM:
             if len(self.current_section) < self.args.section_length:
                 continue
             # Start mapping
-            self.mapping()
-
-            if self.completed_sections == 2:
-                # This was the map initialization, start update counter
+            section_to_track = self.current_section.copy()
+            # update correspondences for each frame to slam_structure
+            self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
+                                            start_frame=0,
+                                            maximum_track_num=args.tracked_point_num_max)
+            # Decide to make frames into new keyframes
+            for idx in self.current_section:
+                # Keyframe decision, adding BA pose-point edges
+                self.keyframe_module.run(idx)  
+                # self.loop_closure(idx)
+            
+            # The number of keyframes to initialize the map is IMPORTANT!
+            if self.keyframe_module.new_keyframe_counter > 6 and len(self.slam_structure.keyframes)!=1:
+                self.keyframe_module.resetNewKeyframeCounter()
+                #TODO:local BA logical adjust 
+                self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
+                logger.info(f'map points:{len(self.slam_structure.points)}')
+                # bad_measurements = self.localBA.get_bad_measurements()
+                # self.slam_structure.remove_measurement(bad_measurements)
                 self.update_start_time = time.time()
                 print("Map initizalized.")
                 break
+            
+            # Update section
+            self.current_section = self.current_section[-1:]
+            self.completed_sections += 1
+
+            # if len(self.slam_structure.keyframes) > 8:
+            #     # This was the map initialization, start update counter
+            #     self.update_start_time = time.time()
+            #     print("Map initizalized.")
+            #     break
     
     def localization(self):
         # If localization is enabled and map is initiallized, localize frame
@@ -130,14 +158,14 @@ class SLAM:
                                             start_frame=start_frame,
                                             maximum_track_num=self.args.localization_track_num)
                 
-                last_pose_points = self.slam_structure.pose_point_map[self.current_section[-1]]
+                # last_pose_points = self.slam_structure.pose_point_map[self.current_section[-1]]
                 current_pose_points = self.slam_structure.pose_point_map[frame_idx]
                 # logger.info(f"Tracking frame: {frame_idx}")
                 # logger.info(f"Section to track: {section_to_track}")
                 # logger.info(f"Tracking start index: {section_to_track[start_frame]}")
-                logger.info(f'last frame:{self.current_section[-1]}: {len(last_pose_points[:self.args.localization_track_num])},'\
-                            f'current frame: {len(current_pose_points)}, ratio: {len(current_pose_points)/len(last_pose_points[:self.args.localization_track_num])}')
-                if len(current_pose_points) < 0.5 * self.args.localization_track_num:
+                # logger.info(f'last frame:{self.current_section[-1]}: {len(last_pose_points[:self.args.localization_track_num])},'\
+                #             f'current frame: {len(current_pose_points)}, ratio: {len(current_pose_points)/len(last_pose_points[:self.args.localization_track_num])}')
+                if len(current_pose_points) < 0.8 * self.args.localization_track_num:
                     # This allows to sample more points when the points lost are too many
                     self.need_sample = True
                 # Localize frame
@@ -165,7 +193,7 @@ class SLAM:
             self.update_start_time = time.time()
             
     def mapping(self):
-        print("Mapping ...")
+        print("Tracking ...")
         mapping_start_time = time.time()
         # Section full, start MAPing
         # Remove all existing correspondences (likely to be faulty), except for frist frame
@@ -180,20 +208,35 @@ class SLAM:
                                         start_frame=0,
                                         maximum_track_num=args.tracked_point_num_max)
         # Decide to make frames into new keyframes
-        self.keyframe_module.new_keyframe_counter = 0
-        for idx in self.current_section[1:]:
+        for idx in self.current_section:
             # Keyframe decision, adding BA pose-point edges
             self.keyframe_module.run(idx)
             # self.loop_closure(idx)
-            # TODO for after paper: Add loop closure here
         
+        # TODO: Add loop closure here
+        # Add detected loop frame to keyframes
+        if len(self.loops) > self.num_loops and self.loop_close_module.loop_coolDown <= 0:
+            self.num_loops = len(self.loops)
+            for frame in self.loops[-1]:
+                if frame not in self.slam_structure.keyframes:
+                    self.keyframe_module.setKeyframe(frame)
+                    # sort keyframes
+                    self.slam_structure.keyframes.sort()
+                    logger.info(f'Add loop frame: {frame}.')
+            # self.keyframe_module.setKeyframe(self.loops[-1][1])
+            logger.info(f'Detect loop: {self.loops[-1][1]} and {self.loops[-1][0]}')
+            slam.loop_closing()
+            
         # If there are new keyframes, run local BA
-        # print('new_keyframe_counter:', self.keyframe_module.new_keyframe_counter)
         if self.keyframe_module.new_keyframe_counter > 0:
+            self.keyframe_module.resetNewKeyframeCounter()
             #TODO:local BA logical adjust 
-            self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
-            bad_measurements = self.localBA.get_bad_measurements()
-            self.slam_structure.remove_measurement(bad_measurements)
+            bad_measurements = self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
+            logger.info(f'bad:{len(bad_measurements)}, total: {len(self.mapping_module.localBA.BA.active_edges())}, bad ratio:{len(bad_measurements)/len(self.mapping_module.localBA.BA.active_edges())}')
+            # bad_measurements = self.localBA.get_bad_measurements()
+            # self.slam_structure.remove_measurement(bad_measurements)
+            
+            # self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
             #     # # Loop closing
             # if len(self.loops) > self.num_loops:
             #     self.num_loops = len(self.loops)
@@ -218,13 +261,74 @@ class SLAM:
         
     def loop_detect(self, frame_idx):
         # detect loops for each frame
+        self.loop_close_module.loop_coolDown -= 1
         loop = self.loop_close_module.find_loops(frame_idx) 
-        if loop is not None and loop[0] in self.slam_structure.keyframes:
-            self.keyframe_module.setKeyframe(frame_idx)
+        if loop is not None:
+            # self.keyframe_module.setKeyframe(frame_idx)
             self.loops.append(loop)
     
+    def loop_closing(self):
+        logger.info('Start loop closing .........................................')
+        # PGO
+        loop_mes = self.loop_close_module.find_motion(slam.loops[-1])
+        self.loop_close_module.loop_mes_list.append(loop_mes)
+        self.PGO.set_data(self.loop_close_module.loop_mes_list)
+        self.PGO.run_pgo()
+        # update BA with poses and points after PGO
+        self.localBA.update_ba_data()
+        # BA to fix scale
+        for idx in self.slam_structure.keyframes:
+            if idx > loop_mes[0] and idx < loop_mes[1]:
+                self.localBA.BA.fix_pose(idx, fixed=False)
+            else:
+                self.localBA.BA.fix_pose(idx, fixed=True)            
+        self.localBA.BA.fix_pose(self.slam_structure.keyframes[0], fixed=True)
+        self.localBA.run_ba(opt_iters=20)
+        self.localBA.get_bad_measurements()
+        # self.localBA.run_ba(opt_iters=10)
+        # self.localBA.get_bad_measurements()
+        # avoid the next local BA
+        self.keyframe_module.new_keyframe_counter = 0
+        # After loop closing, wait for a while to avoid the next loop closing
+        self.loop_close_module.loop_coolDown = 100
+        
+    def unitest(self):
+        import pickle
+        self.slam_structure.keyframes = pickle.load(open(self.slam_structure.exp_root / "keyframes.pickle", 'rb'))
+        self.slam_structure.poses = pickle.load(open(self.slam_structure.exp_root / "poses.pickle",'rb'))
+        self.slam_structure.points = pickle.load(open(self.slam_structure.exp_root / "points.pickle",'rb'))
+        self.slam_structure.pose_point_map = pickle.load(open(self.slam_structure.exp_root / "pose_point_map.pickle",'rb'))
+        
+        for point_id in self.slam_structure.points.keys():
+            self.localBA.BA.add_point(point_id, self.slam_structure.points[point_id][0], fixed=False, marginalized=True)
+        for frame in self.slam_structure.keyframes:
+            self.localBA.set_frame_data(frame, False)
+        # test PGO
+        loop_mes = self.loop_close_module.find_motion([128, 877])
+        self.loop_close_module.loop_mes_list.append(loop_mes)
+        self.PGO.set_data(self.loop_close_module.loop_mes_list)
+        self.PGO.run_pgo()
+        # update BA with poses and points after PGO
+        self.localBA.update_ba_data()
+        # global BA ???
+        for idx in self.slam_structure.keyframes:
+            if idx > 128 and idx < 877:
+                self.localBA.BA.fix_pose(idx, fixed=False)
+            else:
+                self.localBA.BA.fix_pose(idx, fixed=True)            
+        self.localBA.BA.fix_pose(self.slam_structure.keyframes[0], fixed=True)
+        self.localBA.run_ba(opt_iters=10)
+        self.localBA.get_bad_measurements()
+        self.localBA.run_ba(opt_iters=10)
+        self.localBA.get_bad_measurements()
+        
+        # followed by local BA
+        # self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, 2)
+        
+        self.slam_structure.write_tum_poses(self.slam_structure.exp_root / "pgo_poses_pred.txt")
+    
 if __name__ == "__main__":
-
+    
     # TODO: Store arguments and code after execution
 
     parser = argparse.ArgumentParser(description='Python file for running the SLAM pipeline',
@@ -238,8 +342,8 @@ if __name__ == "__main__":
     parser.add_argument("--image_subsample", default=-1, type=int, help="custom image subsample factor")
     parser.add_argument("--img_width", default=-1, type=int, help="width to rescale images to, -1 for no scaling")
     parser.add_argument("--img_height", default=-1, type=int, help="height to rescale images to, -1 for no scaling")
-    parser.add_argument("--lumen_mask_low_threshold", default=0., type=float, help="mask out pixels that are too dark")
-    parser.add_argument("--lumen_mask_high_threshold", default=1., type=float, help="mask out pixels that are too bright")
+    parser.add_argument("--lumen_mask_low_threshold", default=0.05, type=float, help="mask out pixels that are too dark")
+    parser.add_argument("--lumen_mask_high_threshold", default=0.95, type=float, help="mask out pixels that are too bright")
 
     # General Stuff
     parser.add_argument("--target_device", default='cuda:0', type=str, help="GPU to run process on")
@@ -270,7 +374,7 @@ if __name__ == "__main__":
                             'depth_network: use pretrained depth estimation network')
     parser.add_argument('--depth_scale',  default=1.0, type=float, help='scaling factor for depth esimates')
     parser.add_argument("--depth_network_path", default="", type=str, help="path to depth network, only required for depth estimation using the network")
-    parser.add_argument('--point_sampler', type=str, choices=['uniform', 'sift', 'orb', 'r2d2', 'density','akaze'], default='uniform', 
+    parser.add_argument('--point_sampler', type=str, choices=['uniform', 'sift', 'orb', 'r2d2', 'density','akaze'], default='r2d2', 
                         help='how to sample new points at each section start'
                             'uniform: uniform point sampling'
                             'sift: sample sift keypoints'
@@ -278,7 +382,7 @@ if __name__ == "__main__":
                             'r2d2: sample r2d2 keypoints'
                             'density: sample new points based on existing point density')
     parser.add_argument('--tracked_point_num_min',  default=200, type=int, help='Minimum number of point to track per section.')
-    parser.add_argument('--tracked_point_num_max',  default=2000, type=int, help='Maximum number of point to track per section.')
+    parser.add_argument('--tracked_point_num_max',  default=200, type=int, help='Maximum number of point to track per section.')
     parser.add_argument('--localization_track_num',  default=50, type=int, help='Maximum number of points on localization.')
     parser.add_argument("--update_localized_pose", action='store_true', help="update a localized pose in the SLAM datastructure")
     parser.add_argument("--ransac_localization", action='store_true', help="use ransac pnp to localize pose")
@@ -372,6 +476,10 @@ if __name__ == "__main__":
 #                                                   SLAM MAIN LOOP                                                #
 ###################################################################################################################
 slam = SLAM(dataset, args)
+
+# slam.unitest()
+# breakpoint()
+
 # Main SLAM loop
 slam.initialize()
 
@@ -393,11 +501,19 @@ for frame_idx in tqdm(frames_to_process):
     ###########################################################################################################
     #                                                   localization                                          #
     ###########################################################################################################
-    # loop_thread = threading.Thread(target=slam.loop_closure, args=(frame_idx,))
-    # loop_thread.start()
+    loop_thread = threading.Thread(target=slam.loop_detect, args=(frame_idx,))
+    localization_thread = threading.Thread(target=slam.localization)
+    
+    loop_thread.start()
+    localization_thread.start()
+    
+    loop_thread.join()
+    localization_thread.join()
+    
     # slam.loop_detect(frame_idx)
     # If localization is enabled and map is initiallized, localize frame
-    slam.localization()
+    # slam.loop_detect(frame_idx)
+    # slam.localization()
     
     # Add frame to current section
     slam.current_section.append(frame_idx)
@@ -424,7 +540,12 @@ for frame_idx in tqdm(frames_to_process):
     #     # update BA with poses and points after PGO
     #     slam.localBA.update_ba_data()
         
-    # loop_thread.join()
+# for idx in slam.slam_structure.keyframes:
+#     slam.localBA.BA.fix_pose(idx, fixed=False)
+# slam.localBA.BA.fix_pose(slam.slam_structure.keyframes[0], fixed=True)
+# print('Global BA start......')
+# slam.localBA.run_ba(opt_iters=20)
+
 # Filter outliers in reconstruction
 # NOTE: ONLY FILTER AFTER EVERYTHING IS OPTIMIZED, DOES NOT UPDATE 
 slam.slam_structure.filter(min_view_num=2, reprojection_error_threshold=10)

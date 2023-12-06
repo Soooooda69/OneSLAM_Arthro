@@ -3,6 +3,8 @@ import numpy as np
 import time
 import cv2
 import logging
+from DBoW.R2D2 import R2D2
+r2d2 = R2D2()
 logger = logging.getLogger(__name__)
 
 # TODO: Rename this to point tracking for more clarity.
@@ -37,6 +39,43 @@ def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
 
     return points_3d
 
+def triangulatePoints(self, pose_0, next_pose, new_points_0, new_points_1):
+        """Triangulates the feature correspondence points with
+        the camera intrinsic matrix, rotation matrix, and translation vector.
+        It creates projection matrices for the triangulation process."""
+        # pose of the next frame
+        R = next_pose[:3 ,:3]
+        t = next_pose[:3 , 3].reshape(3,1)
+        # The canonical matrix (set as the origin)
+        P0 = np.array([[1, 0, 0, 0],
+                       [0, 1, 0, 0],
+                       [0, 0, 1, 0]])
+        P0 = self.K.dot(P0)
+        # Rotated and translated using P0 as the reference point
+        P1 = np.hstack((R, t))
+        P1 = self.K.dot(P1)
+        new_points_0 = cv2.undistortPoints(new_points_0.astype(np.float64), self.K, None)
+        new_points_1 = cv2.undistortPoints(new_points_1.astype(np.float64), self.K, None)
+        # for i in range(curr_points.shape[1]):
+        #     point_3d_homogeneous = cv2.triangulatePoints(P0, P1, curr_points, next_points)
+        #     point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
+        #     print(point_3d.shape())
+        #     # print(i, point_3d_homogeneous.reshape(-1,4))
+        #     # Minimal motion
+        #     if point_3d_homogeneous[3,:] == 0:
+        #         return None
+        #     else:
+        #         point_3d_homogeneous = point_3d_homogeneous/point_3d_homogeneous[3,:]
+        #         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
+        #         point3d.append(point_3d_homogeneous.reshape(-1,4)[:,:3])
+                
+        point_3d_homogeneous = cv2.triangulatePoints(P0, P1, new_points_0, new_points_1)
+        point_3d_homogeneous = pose_0 @ point_3d_homogeneous
+        point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
+        point_3d = point_3d.reshape((point_3d.shape[0], 3))
+        # print('ppppppppppp',point_3d, t)
+        return point_3d
+
 def vis_tracking(image_torch, tracked_points):
 
         image = image_torch.permute(1, 2, 0).detach().cpu().numpy()*255
@@ -54,25 +93,16 @@ def vis_tracking(image_torch, tracked_points):
         return img
 
 class Tracking:
-    def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA) -> None:
+    def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA, dataset) -> None:
         self.point_resampler = point_resampler
         self.depth_estimator = depth_estimator
         self.tracking_network = tracking_network
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
         self.localBA = BA
+        self.dataset = dataset
+        self.new_point_ids = []
     
-    def update_Keyframe_Correspondence(self, slam_structure, frame_idx, point_id, point_2d):
-        slam_structure.add_correspondence(frame_idx, point_id, point_2d)
-        # If frame_idx is a keyframe, also include corresponce in BA graph
-        if frame_idx in slam_structure.keyframes:
-            # logger.info(f"Adding new point to BA graph {point_id} Tracking {frame_idx}...adding new")
-            edge_id = len(self.localBA.BA.edge_info)
-            edge = self.localBA.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
-            if frame_idx not in slam_structure.pose_point_edges.keys():
-                slam_structure.pose_point_edges[frame_idx] = []
-            slam_structure.pose_point_edges[frame_idx].append(edge)
-            
     def process_section(self, section_indices, dataset, slam_structure, 
                         sample_new_points=True, 
                         start_frame=0, 
@@ -110,36 +140,31 @@ class Tracking:
             current_pose_points = slam_structure.get_pose_points(section_indices[start_frame])
 
             # Resample points
-            kept_pose_points, new_points_2d = self.point_resampler(current_pose_points, image_0, depth_0, intrinsics_0, mask_0, slam_structure)       
+            kept_pose_points, new_points_2d, points_descriptor = self.point_resampler(current_pose_points, image_0, depth_0, intrinsics_0, mask_0, slam_structure)       
+            if new_points_2d is not None:
+                # Unproject new 2d samples
+                new_points_3d = unproject(new_points_2d, depth_0, pose_0, intrinsics_0)
 
-            # Unproject new 2d samples
-            new_points_3d = unproject(new_points_2d, depth_0, pose_0, intrinsics_0)
+                # Add new points and correspondences to datastructure 
+                for i in range(len(new_points_3d)):
+                    point_3d = new_points_3d[i, :3]
+                    point_2d = new_points_2d[i]
+                    # point_descriptor = points_descriptor[i]
+                    
+                    point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
 
-            # Add new points and correspondences to datastructure 
-            for i in range(len(new_points_3d)):
-                point_3d = new_points_3d[i, :3]
-                point_2d = new_points_2d[i]
+                    point_id = slam_structure.add_point(point_3d, point_color)
+                    self.localBA.BA.add_point(point_id, point_3d)
+                    
+                    self.new_point_ids.append(point_id)
+                    slam_structure.add_correspondence(section_indices[start_frame], point_id, point_2d)
+                    kept_pose_points.append((point_id, point_2d))
 
-                point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
-
-                point_id = slam_structure.add_point(point_3d, point_color)
-                self.localBA.BA.add_point(point_id, point_3d)
-                
-                new_point_ids.append(point_id)
-                
-                self.update_Keyframe_Correspondence(slam_structure, section_indices[start_frame], point_id, point_2d)
-                # slam_structure.add_correspondence(section_indices[start_frame], point_id, point_2d)
-                # # If frame_idx is a keyframe, also include corresponce in BA graph
-                # if section_indices[start_frame] in slam_structure.keyframes:
-                #     logger.info(f"Adding new point to BA graph {point_id} Tracking {section_indices[start_frame]}...adding new")
-                #     edge = self.localBA.BA.add_edge(point_id, section_indices[start_frame], point_2d)
-                #     if section_indices[start_frame] not in slam_structure.pose_point_edges.keys():
-                #         slam_structure.pose_point_edges[section_indices[start_frame]] = []
-                #     slam_structure.pose_point_edges[section_indices[start_frame]].append(edge)
-                
-                kept_pose_points.append((point_id, point_2d))
-
-        
+            else:
+                # If no new points were sampled, add old points to current frame correspondences
+                print('no points sampled!')
+                slam_structure.pose_point_map[section_indices[start_frame]] = slam_structure.get_pose_points(section_indices[start_frame]-1)
+                    
         # Obtain currently tracked points on first frame
         pose_points = slam_structure.get_pose_points(section_indices[start_frame])
 
@@ -148,6 +173,7 @@ class Tracking:
 
         
         local_point_ids = []
+        local_point_descriptors = []
         queries = []
         
         # If this hits, you ran out of tracked points
@@ -161,7 +187,8 @@ class Tracking:
         # Generate input data for Co-Tracker
         for (point_id, point2d) in pose_points:
             local_point_ids.append(point_id)
-            if point2d[0]< 0 or  point2d[1] < 0:
+            # local_point_descriptors.append(desecriptor)
+            if point2d[0]< 0 or point2d[1] < 0:
                 breakpoint()
             queries.append([start_frame, point2d[0], point2d[1]])
         
@@ -187,6 +214,12 @@ class Tracking:
             if not section_valid[local_idx]:
                 continue
             
+            # Static frames should not be tracked
+            static_threshold = 20
+            if np.linalg.norm(pred_tracks[0, local_idx, :].detach().cpu().numpy() - pred_tracks[0, local_idx-1, :].detach().cpu().numpy()) < static_threshold:
+                # logger.info(f'No movement from {section_indices[local_idx-1]} to {section_indices[local_idx]}.')
+                pred_tracks[0, local_idx, :] = pred_tracks[0, local_idx-1, :]    
+                
             # Get frame_idx and mask
             frame_idx = section_indices[local_idx]
             mask = samples[local_idx]['mask'].squeeze().detach().cpu().numpy()
@@ -198,7 +231,7 @@ class Tracking:
             for i in range(len(local_point_ids)):
                 # Retrieve point data
                 point_id = local_point_ids[i]
-                
+                # point_descriptor = local_point_descriptors[i]
                 #if point_id not in new_point_ids and frame_idx > 10:
                 #    continue
 
@@ -238,5 +271,5 @@ class Tracking:
                 img = vis_tracking(samples[local_idx]['image'], tracked_points)
                 cv2.imwrite(f'../datasets/temp_data/localize_tracking/{frame_idx}.png', img)
         #breakpoint()
-
+            
         # Point tracking done

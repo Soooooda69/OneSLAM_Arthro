@@ -40,6 +40,7 @@ class PoseGuesserConstantVelocity(PoseGuesserBase):
 class PoseGuesserGTPose(PoseGuesserBase):
     def __init__(self, gt_pose_path) -> None:
         super().__init__()
+        self.start_pose = np.identity(4)
         self.gt_pose = {}
         from scipy.spatial.transform import Rotation as Rot
         with open(gt_pose_path, 'r') as f:
@@ -48,8 +49,13 @@ class PoseGuesserGTPose(PoseGuesserBase):
             pose = np.identity(4)
             pose[:3, :3] = Rot.from_quat([float(x) for x in line.split(' ')[4:]]).as_matrix()
             pose[:3, 3] = [float(x) for x in line.split(' ')[1:4]]
+            if idx == 0:
+                self.start_pose = pose
+            # start from identity
+            pose = np.linalg.inv(self.start_pose) @ pose
+            # normalize the translation
+            # pose[:3, 3] /= np.linalg.norm(pose[:3, 3])
             self.gt_pose[int(line.split(' ')[0])] = pose
-
     def __call__(self, frame_idx):
         return self.gt_pose[frame_idx]
         

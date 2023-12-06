@@ -130,8 +130,8 @@ class SLAMStructure:
                 # return
         
         # Add new correspondence
-        self.pose_point_map[frame_idx].append((point_id, point_2d))
-            
+        # self.pose_point_map[frame_idx].append((point_id, point_2d, point_descriptor))
+        self.pose_point_map[frame_idx].append((point_id, point_2d))    
         # If frame_idx is a keyframe, also include corresponce in BA graph
 
         # if frame_idx in self.keyframes:
@@ -143,13 +143,20 @@ class SLAMStructure:
     # Retrieving data
     def remove_measurement(self, bad_measurements):
         # Remove bad measurements from the BA graph
+        mappoint_count = {point_id: 0 for point_id in self.points.keys()}
         for [frame_idx, point_id, point_2d] in bad_measurements:
+            mappoint_count[point_id] += 1
             # logger.info((point_id, point_2d))
             # logger.info(self.pose_point_map[frame_idx])
             # logger.info((point_id, point_2d) in self.pose_point_map[frame_idx])
+            print((point_id, point_2d) in self.pose_point_map[frame_idx])
             if (point_id, point_2d) in self.pose_point_map[frame_idx]:
                 self.pose_point_map[frame_idx].remove((point_id, point_2d))
                 # logger.info(f"Removed measurement {point_id} from frame {frame_idx}")
+        # for mappoint_id in self.points.keys():
+        #     if mappoint_count[mappoint_id] > 10:
+        #         # self.points.pop(mappoint_id)
+        #         logger.info(f"Removed mappoint {mappoint_id}")
             
             
     def get_previous_poses(self, n):
@@ -387,7 +394,7 @@ class SLAMStructure:
         self.visualization_root = self.exp_root / 'vis'
         self.visualization_root.mkdir(parents=True, exist_ok=True)
 
-        # plot_points(self.visualization_root / 'points.ply', self)
+        plot_points(self.visualization_root / 'points.ply', self)
         plot_and_save_trajectory(self, save_name=str(self.visualization_root / 'trajectory.ply'))
 
 

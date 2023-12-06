@@ -153,21 +153,24 @@ class LocalBA:
             edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
             # print('edge_id:', edge.id())
             # edge = self.BA.add_edge(point_id, frame_idx, point_2d)
+            # logger.info(f'frame id: {frame_idx}, add edge:{edge.id()}, point_id:{point_id}.')
             self.BA.edge_info.append([frame_idx, point_id, point_2d])
             if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
                 self.slam_sturcture.pose_point_edges[frame_idx] = []
             self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
-    
+            
     def get_bad_measurements(self):
         bad_measurements = []
         for edge in self.BA.active_edges():
             if edge.chi2() > self.huber_threshold:
                 #remove bad edges
-                self.BA.remove_edge(edge)
+                # self.BA.remove_edge(edge)
+                edge.set_level(1)
                 bad_measurements.append(self.BA.edge_info[edge.id()])
-        # print('bad:',len(bad_measurements), 'total:', len(self.BA.active_edges()), 'bad ratio:', len(bad_measurements)/len(self.BA.active_edges()))
+        # logger.info(f'bad:{len(bad_measurements)}, total: {len(self.BA.active_edges())}, bad ratio:{len(bad_measurements)/len(self.BA.active_edges())}')
         # logger.info(f'bad ratio:{len(bad_measurements)/len(self.BA.active_edges())}')
         # logger.info(f'bad:{bad_measurements}')
+        # self.slam_sturcture.remove_measurement(bad_measurements)
         return bad_measurements
     
     def run_ba(self, opt_iters=None):
@@ -190,13 +193,14 @@ class LocalBA:
             self.slam_sturcture.valid_points.add(point_id)
             
     def update_ba_data(self):
-        for keyframe in self.slam_sturcture.keyframes:
-            pose, intrinsics = self.slam_sturcture.poses[keyframe]
-            self.BA.set_pose(keyframe, pose, intrinsics)
-
         for point_id in self.slam_sturcture.points.keys():
             point, point_color = self.slam_sturcture.points[point_id]
             self.BA.set_point(point_id, point)
+            
+        for keyframe in self.slam_sturcture.keyframes:
+            pose, intrinsics = self.slam_sturcture.poses[keyframe]
+            self.BA.set_pose(keyframe, pose, intrinsics)
+        
 
 class PoseGraphOptimization(g2o.SparseOptimizer):
     def __init__(self, slam_structure):
