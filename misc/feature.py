@@ -17,9 +17,10 @@ class ImageFeature(object):
         self.idx = idx
         self.height, self.width = image.shape[:2]
 
-        self.keypoints = []      # list of cv2.KeyPoint
-        self.descriptors = []    # numpy.ndarray
-
+        self.keypoints = []      # numpy.ndarray (N,2)
+        self.descriptors = []    # numpy.ndarray (N,256)
+        self.keypoints_ids = []
+        
         self.num_points = 2000
         self.matcher = None
 
@@ -36,6 +37,7 @@ class ImageFeature(object):
         if descriptors is None:
             self.keypoints = np.array([])
             self.descriptors = np.array([])
+            self.keypoints_ids = np.array([])
             self.unmatched = np.array([])
             return
         keypoints = keypoints[:,:2].astype(int)
@@ -48,8 +50,10 @@ class ImageFeature(object):
             kps_filtered.append(keypoints[i])
             des_filtered.append(descriptors[i])
              
-        self.keypoints = np.array(kps_filtered)
-        self.descriptors = np.array(des_filtered)  
+        self.keypoints = np.vstack(kps_filtered)
+        self.descriptors = np.vstack(des_filtered)
+        # init the keypoints_ids, later will be updated by ids of map points
+        self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
         self.unmatched = np.ones(len(self.keypoints), dtype=bool)
     
     def draw_keypoints(self):

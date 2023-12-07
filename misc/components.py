@@ -1,5 +1,6 @@
 import numpy as np
 import g2o
+from collections import defaultdict
 from misc.feature import ImageFeature
 from misc.covisibility import GraphKeyFrame
 from misc.covisibility import GraphMapPoint
@@ -29,7 +30,7 @@ class Frame(object):
     def __init__(self, idx, pose, mask, image, cam, timestamp=None, 
             pose_covariance=np.identity(6)):
         self.idx = idx
-        self.psose = pose    # g2o.Isometry3d
+        self.pose = pose    # g2o.Isometry3d
         self.orientation = self.pose.orientation()  
         self.position = self.pose.position()
         
@@ -65,6 +66,16 @@ class Frame(object):
         t = self.transform_matrix[:3, 3]
         return R.dot(points) + t
 
+    def itransform(self, points):   # from camera coordinates
+        '''
+        Transform points from camera coordinates frame to world frame.
+        Args:
+            points: a point or an array of points, of shape (3,) or (3, N).
+        '''
+        R = self.transform_matrix[:3, :3]
+        t = self.transform_matrix[:3, 3]
+        return R.T.dot(points - t)
+    
     def project(self, points): 
         '''
         Project points from camera frame to image's pixel coordinates.
@@ -76,6 +87,29 @@ class Frame(object):
         projection = self.cam.intrinsic.dot(points / points[-1:])
         return projection[:2], points[-1]
 
+    def unproject(self, points, depth_image):
+        '''
+        Unproject points from image's pixel coordinates to camera frame.
+        Args:
+            points: a point or an array of points, of shape (,2) or (N, 2).
+            depth: a scalar or an array of scalars, of shape (1,) or (1, N).
+        Returns:
+            Unprojected points in camera frame. (N, 3)
+        '''
+        x_d, y_d = points[:, 0], points[:, 1]
+        fx, fy, cx, cy = self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy
+
+        depths = depth_image[y_d.astype(int), x_d.astype(int)]
+        x = ((x_d - cx) * depths / fx)[:, None]
+        y = ((y_d - cy) * depths / fy)[:, None]
+        z = depths[:, None]
+
+        # points_3d = np.stack([x, y, z, np.ones_like(x)],  axis=-1).squeeze(axis=1)
+        points_3d = np.stack([x, y, z], axis=1).reshape(3, -1)
+        points_3d = self.itransform(points_3d).reshape(-1, 3)
+        
+        return points_3d
+        
     def find_matches(self, points, descriptors):
         '''
         Match to points from world frame.
@@ -100,6 +134,7 @@ class Frame(object):
         self.feature.set_matched(i)
     def get_unmatched_keypoints(self):
         return self.feature.get_unmatched_keypoints()
+    
     
 class MapPoint(GraphMapPoint):
     _id = 0
