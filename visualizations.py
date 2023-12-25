@@ -17,9 +17,9 @@ def plot_and_save_trajectory(
     show=False,
 ):
     pose_array = []
-    for frame in slam_structure.keyframes: 
-        print(f'{frame:08}:', slam_structure.poses[frame][0][:3, 3])
-        pose_array.append(slam_structure.poses[frame][0])
+    for keyframe in slam_structure.key_frames.values(): 
+        print(f'{keyframe.idx:08}:', keyframe.pose.matrix()[:3, 3])
+        pose_array.append(keyframe.pose.matrix())
     
     poses = pose_array
 
@@ -61,18 +61,19 @@ def plot_and_save_trajectory(
 def plot_points(filepath, slam_structure):
     # Count number of point occurances to avoid untriangulated points
     counts = dict()
-    for keyframe in slam_structure.keyframes:
-        for point_id, _ in slam_structure.pose_point_map[keyframe]:
+    for keyframe in slam_structure.key_frames.values():
+        for point_id in keyframe.feature.keypoints_ids:
             if point_id not in counts:
                 counts[point_id] = 0
             counts[point_id] += 1
 
     point_cloud = []
     point_colors = []
-    for point_id in slam_structure.points.keys():
+    for mappoint in slam_structure.map_points.values():
+        point_id = mappoint.id
         if point_id not in counts or counts[point_id] <= 3:
             continue
-        point_3d, point_color = slam_structure.points[point_id]
+        point_3d, point_color = mappoint.position, mappoint.color
         point_cloud.append(point_3d)
         point_colors.append(point_color)
 
@@ -94,16 +95,17 @@ def visualize_point_correspondences(path, slam_structure, subsample_factor = 1):
     frames = []
     indices = []
 
-    for frame_idx in slam_structure.pose_images.keys():
-        indices.append(frame_idx)
-        frame = np.copy(slam_structure.pose_images[frame_idx])
-        point_info = slam_structure.pose_point_map[frame_idx]
+    for keyframe in slam_structure.key_frames.values():
+        indices.append(keyframe.idx)
+        img = np.copy(keyframe.feature.image) # x,y,c
+        img = np.transpose(img, (2, 0, 1)) # c,x,y
+        # point_info = slam_structure.pose_point_map[frame_idx]
 
-        for (point_id, point_2d) in point_info:
+        for (point_id, point_2d) in zip(keyframe.feature.keypoints_ids, keyframe.feature.keypoints):
             if point_id%subsample_factor != 0:
                 continue
-            point_2d_org_x = min(max(4, int(point_2d[0])), frame.shape[2]-5)
-            point_2d_org_y = min(max(4, int(point_2d[1])), frame.shape[1]-5)
+            point_2d_org_x = min(max(4, int(point_2d[0])), img.shape[2]-5)
+            point_2d_org_y = min(max(4, int(point_2d[1])), img.shape[1]-5)
 
             color = get_color(point_id)
 
@@ -111,10 +113,11 @@ def visualize_point_correspondences(path, slam_structure, subsample_factor = 1):
 
             for i in range(-size, size+1):
                 for j in range(-size, size+1):
-                    frame[:, point_2d_org_y+j, point_2d_org_x+i] = color
+                    img[:, point_2d_org_y+j, point_2d_org_x+i] = color
             
-        frames.append(np.rollaxis(frame*255, 0, 3).astype(np.uint8))
-    
+        # frames.append(np.rollaxis(img*255, 0, 3).astype(np.uint8))
+        frames.append(np.rollaxis(img, 0, 3).astype(np.uint8))
+        
     for i in range(len(frames)):
         im = Image.fromarray(frames[i])
         im.save(str(path / (f'{indices[i]:06}'+".png")))

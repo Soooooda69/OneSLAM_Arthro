@@ -19,14 +19,15 @@ class KeyframeSelect(ABC):
     
     def setKeyframe(self, idx):
         # Update keyframe in slam_structure and localBA
-        image = self.dataset[idx]['image'].detach().cpu().numpy()
-        depth = self.depth_estimator(self.dataset[idx]['image'], self.dataset[idx]['mask']).squeeze().detach().cpu().numpy()
-        mask = self.dataset[idx]['mask'].squeeze().detach().cpu().numpy()
-        mask[depth < 1e-6] = 0
-        self.slam_structure.make_keyframe(idx, image, depth, mask)   
+        # image = self.dataset[idx]['image'].detach().cpu().numpy()
+        # depth = self.depth_estimator(self.dataset[idx]['image'], self.dataset[idx]['mask']).squeeze().detach().cpu().numpy()
+        # mask = self.dataset[idx]['mask'].squeeze().detach().cpu().numpy()
+        # mask[depth < 1e-6] = 0
+        self.slam_structure.make_keyframe(idx)
         self.localBA.set_frame_data(idx, fixed=False)
         self.new_keyframe_counter += 1
         self.new_keyframes.append(idx)
+        # self.slam_structure.all_frames[idx].to_keyframe()
         print('keyframe:', idx)
         
     def resetNewKeyframeCounter(self):
@@ -64,16 +65,17 @@ class KeyframeSelectFeature(KeyframeSelect):
             # Check if last keyframe was old
             self.make_keyframe = True
         else:
-            last_keyframe = self.slam_structure.keyframes[-1]
-            last_pose_points =  self.slam_structure.pose_point_map[last_keyframe]
+            # Compare similarity of tracked points between last keyframe and current frame
+            # last_keyframe = self.slam_structure.keyframes[-1]
+            # last_pose_points =  self.slam_structure.pose_point_map[last_keyframe]
+            last_keypoints_ids = list(self.slam_structure.key_frames.values())[-1].feature.keypoints_ids
             last_point_ids = set()
-            for (point_id, point_2d) in last_pose_points: last_point_ids.add(point_id)
+            for point_id in last_keypoints_ids: last_point_ids.add(point_id)
 
-            current_pose_points = self.slam_structure.pose_point_map[idx]
-
+            # current_pose_points = self.slam_structure.pose_point_map[idx]
+            current_point_ids = self.slam_structure.all_frames[idx].feature.keypoints_ids
             tracked_point_ids = set()
-            for (point_id, point_2d) in current_pose_points:
-                if point_id in last_point_ids: tracked_point_ids.add(point_id)
+            for point_id in current_point_ids: tracked_point_ids.add(point_id)
             
             # print(f'jaccard_similarity between{idx}, {last_keyframe}:',self.jaccard_similarity(tracked_point_ids, last_point_ids))
             # if len(tracked_point_ids)/len(last_point_ids) < 0.8:
@@ -89,6 +91,8 @@ class KeyframeSelectFeature(KeyframeSelect):
         return intersection / union if union != 0 else 0
     
     def run(self, idx):
+        if idx in self.slam_structure.key_frames.keys():
+            return
         self.decide_keyframe(idx)
         if self.make_keyframe:
             # print('keyframe:', idx)

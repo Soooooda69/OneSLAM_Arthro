@@ -14,6 +14,7 @@ from DBoW.R2D2 import R2D2
 r2d2 = R2D2()
 import cv2
 import logging
+from misc.components import Frame, Camera, KeyFrame, MapPoint
 logger = logging.getLogger(__name__)
 
 from visualizations import *
@@ -34,18 +35,23 @@ class SLAMStructure:
     def __init__(self, dataset, name='', output_folder='./experiments') -> None:
         self.dataset = dataset
         # Internal storage
-        self.frames = []
-        self.keyframes = []
-        self.poses = dict() # frame_idx: (pose, intrinsics)
+        self.all_frames = dict() #frame_idx: Frame instance
+        self.key_frames = dict() #frame_idx: KeyFrame instance
+        self.lc_frames = dict() #frame_idx: localize Frame instance
+        self.map_points = dict() #point_id: MapPoint instance
+        self.lc_frames = dict() #frame_idx: localize Frame instance
+        # self.frames = []
+        # self.keyframes = []
+        # self.poses = dict() # frame_idx: (pose, intrinsics)
 
-        self.points = dict() # Set of point instances {id: (3d, color)}
-        self.pose_point_map = dict() # Pose to point associations {pose_id: [...(point_id, 2d)]}
+        # self.points = dict() # Set of point instances {id: (3d, color)}
+        # self.pose_point_map = dict() # Pose to point associations {pose_id: [...(point_id, 2d)]}
         self.pose_point_edges = dict() # Stores edges for every pose 
 
 
-        self.pose_images = dict() # Store keyframe images for visualizations
-        self.pose_depths = dict() # Store keyframe depths for possible later use
-        self.pose_masks =  dict() # Store keyframe masks for possible later use
+        # self.pose_images = dict() # Store keyframe images for visualizations
+        # self.pose_depths = dict() # Store keyframe depths for possible later use
+        # self.pose_masks =  dict() # Store keyframe masks for possible later use
 
         self.valid_points = set() # Points that have been extracted from a BA run
         self.valid_frames = set() # Poses that are localized in the current map
@@ -57,44 +63,47 @@ class SLAMStructure:
     
     # Registering new frames
 
-    def add_frame(self, frame_idx, pose, intrinsics):
-        # Register a new frame into the SLAM structure
+    # def add_frame(self, frame_idx, pose, intrinsics):
+    #     # Register a new frame into the SLAM structure
 
-        # Assert that frame has not been added already
-        assert frame_idx not in self.poses.keys()
+    #     # Assert that frame has not been added already
+    #     assert frame_idx not in self.poses.keys()
 
-        # Add new pose
-        self.poses[frame_idx] = (pose, intrinsics)
-        self.pose_point_map[frame_idx] = []
-
-    def make_keyframe(self, frame_idx, image, depth, mask) -> None:
+    #     # Add new pose
+    #     self.poses[frame_idx] = (pose, intrinsics)
+    #     self.pose_point_map[frame_idx] = []
+    
+    def add_frame(self, frame_idx, pose):
+        intrinsic=self.dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
+        mask = self.dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
+        image = self.dataset[frame_idx]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
+        image = image.astype(np.uint8)
+        cam = Camera(intrinsic)
+        frame = Frame(frame_idx, pose, mask, image, cam, timestamp=None)
+        self.all_frames[frame_idx] = frame
+        
+    def make_keyframe(self, frame_idx) -> None:
         # Make an existing frame into a new keyframe
-
         # Assert that frame has been registered and is not already a keyframe
-        assert frame_idx in self.poses.keys()
-        assert frame_idx not in self.keyframes
-
-        # Include frame in bundle adjustment graph
+        assert frame_idx not in self.key_frames.keys()
+        # if frame_idx in self.key_frames.keys():
+        #     return
+        # print(f"Making frame {frame_idx} into keyframe")
         
-        # # Add pose to BA
-        # pose, intrinsics = self.poses[frame_idx]
-        # self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
+        frame = self.all_frames[frame_idx]
+        keyframe = frame.to_keyframe()
+        # keyframe.update_preceding(list(self.key_frames.values())[-1])
+        if frame_idx != 1:
+            keyframe.update_preceding(list(self.key_frames.values())[-1])
+        self.key_frames[frame_idx] = keyframe
         
-        # # Add existing correspondences to BA
-        # for (point_id, point_2d) in self.pose_point_map[frame_idx]:
-        #     edge = self.BA.add_edge(point_id, frame_idx, point_2d)
-        #     if frame_idx not in self.pose_point_edges.keys():
-        #         self.pose_point_edges[frame_idx] = []
-        #     self.pose_point_edges[frame_idx].append(edge)
-        
-
-        # Store additional information for later use (visualization, ...)
-        self.pose_images[frame_idx] = image
-        self.pose_depths[frame_idx] = depth
-        self.pose_masks[frame_idx] = mask
+        # # Store additional information for later use (visualization, ...)
+        # self.pose_images[frame_idx] = image
+        # self.pose_depths[frame_idx] = depth
+        # self.pose_masks[frame_idx] = mask
 
         # Add frame to keyframes
-        self.keyframes.append(frame_idx)
+        # self.keyframes.append(frame_idx)
 
     # Registering new points and correspondences
 
@@ -162,10 +171,10 @@ class SLAMStructure:
     def get_previous_poses(self, n):
         # Return the last n pose estimates
 
-        sorted_pose_keys = sorted(list(self.poses.keys()))
+        sorted_frames_idx = sorted(self.all_frames.keys())
         poses = [] 
-        for key in sorted_pose_keys[-n:]:
-            pose, _ = self.poses[key]
+        for frame_idx in sorted_frames_idx[-n:]:
+            pose = self.all_frames[frame_idx].pose.matrix()
             poses.append(pose)
         
         return poses 
@@ -181,17 +190,19 @@ class SLAMStructure:
 
     # Pose estimation/Mapping functions
     
-    def localize_frame(self, frame_idx, update_pose=False, ransac=False):
+    def localize_frame(self, frame, update_pose=False, ransac=False):
         # Localize a frame against current map
 
-        assert frame_idx in self.poses.keys()
-
-        current_pose, intrinsics = self.poses[frame_idx]
-        
-        pose_points = self.pose_point_map[frame_idx]
-        pose_points_filtered = list(filter(lambda pair: pair[0] in self.valid_points, pose_points))
-
-        if len(pose_points_filtered) <= 5:
+        # assert frame in self.all_frames.keys()
+        # print(f"Localizing frame {frame.idx}")
+        # current_pose, intrinsics = self.poses[frame_idx]
+        current_pose, intrinsics = frame.pose.matrix(), frame.intrinsic
+        # pose_points = self.pose_point_map[frame_idx]
+        key_points = frame.feature.keypoints_ids
+        points_idx_filtered = list(filter(lambda pair: pair in self.valid_points, key_points))
+        # points_filtered = frame.feature.keypoints_info[points_idx_filtered]
+        points_filtered = [(i, frame.feature.keypoints_info[i][0]) for i in points_idx_filtered]
+        if len(points_filtered) <= 5:
             return current_pose
         
         trans_vec, rot_vec = mat_to_vecs(np.linalg.inv(current_pose))
@@ -199,8 +210,9 @@ class SLAMStructure:
         obj_pts = []
         img_pts = []
 
-        for (point_id, point_2d) in pose_points_filtered:
-            obj_pts.append(self.points[point_id][0])
+        for (point_id, point_2d) in points_filtered:
+            # obj_pts.append(self.points[point_id][0])
+            obj_pts.append(self.map_points[point_id].position)
             img_pts.append(point_2d)
 
         obj_pts = np.array(obj_pts)
@@ -219,10 +231,10 @@ class SLAMStructure:
 
         localized_pose = np.linalg.inv(vecs_to_mat(tvec.squeeze(), rvec.squeeze()))
 
-        if update_pose:
-            self.poses[frame_idx] = (localized_pose, intrinsics)
-            self.valid_frames.add(frame_idx)
-            self.frames.append(frame_idx)
+        # if update_pose:
+        #     self.poses[frame_idx] = (localized_pose, intrinsics)
+        #     self.valid_frames.add(frame_idx)
+        #     self.frames.append(frame_idx)
         return localized_pose
     
 
@@ -241,9 +253,11 @@ class SLAMStructure:
         reprojection_errors = dict()
         min_depths = dict()
 
-        for frame_idx in self.keyframes:
-            pose, intrinsics = self.poses[frame_idx]
-            pose_points = self.pose_point_map[frame_idx]
+        # for frame_idx in self.keyframes:
+        for keyframe in self.key_frames.values():
+            pose, intrinsics = keyframe.pose.matrix(), keyframe.intrinsic
+            frame_idx = keyframe.idx
+            # pose_points = self.pose_point_map[frame_idx]
             world_to_cam = np.linalg.inv(pose)
             intrinsics_mat = np.identity(3)
             intrinsics_mat[0, 0] = intrinsics[0]
@@ -254,8 +268,9 @@ class SLAMStructure:
             projection_mat = np.identity(4)[:3]
 
             #breakpoint()
-            for (point_id, point_2d) in pose_points:
-                point_3d, _ =  self.points[point_id]
+            for (point_id, point_2d) in zip(keyframe.feature.keypoints_ids, keyframe.feature.keypoints):
+            # for (point_id, point_2d) in pose_points:
+                point_3d = self.map_points[point_id].position
                 point_3d_homogenous = np.append(point_3d, 1)
 
                 point_2d_projected = intrinsics_mat @ projection_mat @ world_to_cam @ point_3d_homogenous
@@ -278,11 +293,11 @@ class SLAMStructure:
         visible_frames = dict() # point_id => [frame_indices]
         visible_points = dict() # frame_idx => [point_ids]
 
-        for frame_idx in self.keyframes:
-            visible_points[frame_idx] = [] 
+        for keyframe in self.key_frames.values():
+            visible_points[keyframe.idx] = [] 
 
-        for point_id in self.points.keys():
-            visible_frames[point_id] = []
+        for mappoint in self.map_points.values():
+            visible_frames[mappoint.idx] = []
 
             if point_id not in reprojection_errors.keys():
                 continue
@@ -301,13 +316,16 @@ class SLAMStructure:
                 visible_points[frame_idx].append(point_id)
         
         filtered_corr_num = 0
-        for frame_idx in self.keyframes:
-            if frame_idx not in self.pose_point_map.keys():
+        # for frame_idx in self.keyframes:
+        for keyframe in self.key_frames.values():
+            if keyframe.idx not in self.key_frames.keys():
+            # if frame_idx not in self.pose_point_map.keys():
                 continue
             
-            num_corr_before = len(self.pose_point_map[frame_idx])
+            num_corr_before = len(keyframe.feature.keypoints)
             filter_func = (lambda visible_points: (lambda pair: pair[0] in visible_points[frame_idx]))(visible_points)
             self.pose_point_map[frame_idx] = list(filter(filter_func, self.pose_point_map[frame_idx]))
+            keyframe.feature.keypoints = list(filter(filter_func, keyframe.feature.keypoints))
             
             num_corr_after = len(self.pose_point_map[frame_idx])
 
@@ -334,13 +352,13 @@ class SLAMStructure:
         print("Writing tum poses ...")
         with open(path, "w") as tum_file:
             tum_file.write("# frame_index tx ty tz qx qy qz qw\n")
-            for frame_index in self.keyframes:
-            # for frame_index in self.frames:
-                pose, _ = self.poses[frame_index]
+
+            for keyframe in self.key_frames.values():
+                pose = keyframe.pose.matrix()
                 t = pose[:3, 3]
                 q = R.from_matrix(pose[:3, :3]).as_quat()
 
-                tum_file.write(f'{frame_index} {t[0]} {t[1]} {t[2]} {q[0]} {q[1]} {q[2]} {q[3]}\n')
+                tum_file.write(f'{keyframe.idx} {t[0]} {t[1]} {t[2]} {q[0]} {q[1]} {q[2]} {q[3]}\n')
 
         print(f'Wrote poses to {path}')
     
@@ -349,12 +367,13 @@ class SLAMStructure:
         with open(path, "w") as tum_file:
             tum_file.write("# frame_index tx ty tz qx qy qz qw\n")
             # for frame_index in self.keyframes:
-            for frame_index in self.frames:
-                pose, _ = self.poses[frame_index]
+            for frame in self.all_frames.values():
+                # pose, _ = self.poses[frame_index]
+                pose = frame.pose.matrix()
                 t = pose[:3, 3]
                 q = R.from_matrix(pose[:3, :3]).as_quat()
 
-                tum_file.write(f'{frame_index} {t[0]} {t[1]} {t[2]} {q[0]} {q[1]} {q[2]} {q[3]}\n')
+                tum_file.write(f'{frame.idx} {t[0]} {t[1]} {t[2]} {q[0]} {q[1]} {q[2]} {q[3]}\n')
 
         print(f'Wrote poses to {path}')
 
@@ -362,18 +381,33 @@ class SLAMStructure:
         self.exp_root.mkdir(parents=True, exist_ok=True)
         
         # Dump class data as pickles (expect image data)
+        mappoints_dict = {} #{id: (3d, color)}
+        for mappoint in self.map_points.values():
+            mappoints_dict[mappoint.id] = (mappoint.position, mappoint.color)
+        with open(self.exp_root / "mappoints.pickle", 'wb') as handle: 
+            pickle.dump(mappoints_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        keyframes_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose]}
+        for keyframe in self.key_frames.values():
+            keyframes_dict[keyframe.idx] = [keyframe.feature.keypoints_info, keyframe.pose.matrix()]
         with open(self.exp_root / "keyframes.pickle", 'wb') as handle:
-            pickle.dump(self.keyframes, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(self.exp_root / "poses.pickle", 'wb') as handle:
-            pickle.dump(self.poses, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
+            pickle.dump(keyframes_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
+        frames_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose]}
+        for frame in self.all_frames.values():
+            frames_dict[frame.idx] = [frame.feature.keypoints_info, frame.pose.matrix()]
+        with open(self.exp_root / "frames.pickle", 'wb') as handle:
+            pickle.dump(frames_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # with open(self.exp_root / "poses.pickle", 'wb') as handle:
+        #     pickle.dump(self.poses, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        
         self.write_tum_poses(self.exp_root / "poses_pred.txt")
         self.write_full_tum_poses(self.exp_root / "f_poses_pred.txt")
         
-        with open(self.exp_root / "points.pickle", 'wb') as handle:
-            pickle.dump(self.points, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        with open(self.exp_root / "pose_point_map.pickle", 'wb') as handle:
-            pickle.dump(self.pose_point_map, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # with open(self.exp_root / "points.pickle", 'wb') as handle:
+        #     pickle.dump(self.points, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # with open(self.exp_root / "pose_point_map.pickle", 'wb') as handle:
+        #     pickle.dump(self.pose_point_map, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
 
         # Copy dataset

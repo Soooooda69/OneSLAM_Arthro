@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
+from misc.components import Frame
 import cv2
 
 from DBoW.R2D2 import R2D2
@@ -271,6 +272,31 @@ class PointResamplerAKAZE(PointResamplerBase):
 
         return current_pose_points, new_2d_points
 
+# class PointResamplerR2D2(PointResamplerBase):
+#     def __init__(self, min_num_points, max_num_points, min_new_points) -> None:
+#         super().__init__()
+#         self.min_num_points = min_num_points
+#         self.min_new_points = min_new_points
+#         self.max_num_points = max_num_points
+#         # numbers of image points from r2d2
+#         # 2000 to give r2d2 good chances
+#         self.num_points = 2000
+        
+#     def __call__(self, current_pose_points, image, depth, intrinsics, mask, slam_structure):
+#         points_to_sample = max(self.min_num_points - len(current_pose_points), self.min_new_points)
+#         if len(current_pose_points) >= self.min_num_points:
+#             return current_pose_points, None, None
+        
+#         image = np.transpose(image, (1, 2, 0))*255
+#         image = image.astype(np.uint8)
+
+
+#         new_2d_points, new_points_descriptor = sample_r2d2_features(image, mask, self.num_points)
+#         # new_2d_points = new_2d_points[np.random.choice(len(new_2d_points), points_to_sample, replace=False)]
+#         new_2d_points = new_2d_points[:points_to_sample]
+        
+#         return current_pose_points, new_2d_points, new_points_descriptor
+    
 class PointResamplerR2D2(PointResamplerBase):
     def __init__(self, min_num_points, max_num_points, min_new_points) -> None:
         super().__init__()
@@ -279,21 +305,18 @@ class PointResamplerR2D2(PointResamplerBase):
         self.max_num_points = max_num_points
         # numbers of image points from r2d2
         # 2000 to give r2d2 good chances
-        self.num_points = 2000
+        # self.num_points = 2000
         
-    def __call__(self, current_pose_points, image, depth, intrinsics, mask, slam_structure):
-        points_to_sample = max(self.min_num_points - len(current_pose_points), self.min_new_points)
-        if len(current_pose_points) >= self.min_num_points:
-            return current_pose_points, None, None
+    def __call__(self, frame):
+        points_to_sample = max(self.min_num_points - len(frame.feature.keypoints), self.min_new_points)
+        if len(frame.feature.keypoints) >= self.min_num_points:
+            return frame.feature.keypoints, None, None
         
-        image = np.transpose(image, (1, 2, 0))*255
-        image = image.astype(np.uint8)
+        # image = np.transpose(frame.feature.image, (1, 2, 0))*255
+        # image = image.astype(np.uint8)
 
-
-        new_2d_points, new_points_descriptor = sample_r2d2_features(image, mask, self.num_points)
-        # new_2d_points = new_2d_points[np.random.choice(len(new_2d_points), points_to_sample, replace=False)]
-        new_2d_points = new_2d_points[:points_to_sample]
-        
+        current_pose_points = frame.feature.keypoints
+        #  extract new features
+        new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=False)
+        # keep limited number of features
         return current_pose_points, new_2d_points, new_points_descriptor
-    
-        

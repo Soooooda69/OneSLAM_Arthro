@@ -2,6 +2,7 @@ import numpy as np
 import g2o
 from g2o.contrib import SmoothEstimatePropagator
 import logging
+from misc.components import Frame, KeyFrame, MapPoint
 logger = logging.getLogger(__name__)
 
 class BundleAdjuster(g2o.SparseOptimizer):
@@ -144,11 +145,15 @@ class LocalBA:
         self.huber_threshold = 5.991
         
     def set_frame_data(self, frame_idx, fixed):
-        pose, intrinsics = self.slam_sturcture.poses[frame_idx]
+        # pose, intrinsics = self.slam_sturcture.poses[frame_idx]
+        frame = self.slam_sturcture.all_frames[frame_idx]
+        pose = frame.pose
+        intrinsics = frame.intrinsic # [fx, fy, cx, cy]
         self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
         
         # Add existing correspondences to BA
-        for (point_id, point_2d) in self.slam_sturcture.pose_point_map[frame_idx]:
+        for point_id, (point_2d, des) in frame.feature.keypoints_info.items():
+        # for (point_id, point_2d) in self.slam_sturcture.pose_point_map[frame_idx]:
             edge_id = len(self.BA.edge_info)
             edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
             # print('edge_id:', edge.id())
@@ -181,27 +186,49 @@ class LocalBA:
         self.valid_frames = set()
         self.extract_ba_data()
     
+    # def extract_ba_data(self):
+    #     for keyframe in self.slam_sturcture.keyframes:
+    #         _, intrinsics = self.slam_sturcture.poses[keyframe]
+    #         self.slam_sturcture.poses[keyframe] = (self.BA.get_pose(keyframe).matrix(), intrinsics)      
+    #         self.valid_frames.add(keyframe)
+
+    #     for point_id in self.slam_sturcture.points.keys():
+    #         _, point_color = self.slam_sturcture.points[point_id]
+    #         self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
+    #         self.slam_sturcture.valid_points.add(point_id)
+    
     def extract_ba_data(self):
-        for keyframe in self.slam_sturcture.keyframes:
-            _, intrinsics = self.slam_sturcture.poses[keyframe]
-            self.slam_sturcture.poses[keyframe] = (self.BA.get_pose(keyframe).matrix(), intrinsics)      
+        for keyframe in self.slam_sturcture.key_frames.values():
+            keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
             self.valid_frames.add(keyframe)
 
-        for point_id in self.slam_sturcture.points.keys():
-            _, point_color = self.slam_sturcture.points[point_id]
-            self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
-            self.slam_sturcture.valid_points.add(point_id)
+        # for point_id in self.slam_sturcture.points.keys():
+        #     _, point_color = self.slam_sturcture.points[point_id]
+        #     self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
+        #     self.slam_sturcture.valid_points.add(point_id)
+            
+        for mappoint in self.slam_sturcture.map_points.values():
+            mappoint.update_position(self.BA.get_point(mappoint.id))
+            self.slam_sturcture.valid_points.add(mappoint.id)
+            
+    # def update_ba_data(self):
+    #     for point_id in self.slam_sturcture.points.keys():
+    #         point, point_color = self.slam_sturcture.points[point_id]
+    #         self.BA.set_point(point_id, point)
+            
+    #     for keyframe in self.slam_sturcture.keyframes:
+    #         pose, intrinsics = self.slam_sturcture.poses[keyframe]
+    #         self.BA.set_pose(keyframe, pose, intrinsics)
             
     def update_ba_data(self):
-        for point_id in self.slam_sturcture.points.keys():
-            point, point_color = self.slam_sturcture.points[point_id]
-            self.BA.set_point(point_id, point)
+        for mappoint in self.slam_sturcture.map_points.values():
+            point, point_color = mappoint.position, mappoint.color
+            self.BA.set_point(mappoint.id, point)
             
-        for keyframe in self.slam_sturcture.keyframes:
-            pose, intrinsics = self.slam_sturcture.poses[keyframe]
-            self.BA.set_pose(keyframe, pose, intrinsics)
-        
-
+        for keyframe in self.slam_sturcture.key_frames.values():
+            pose, intrinsics = keyframe.pose, keyframe.intrinsic
+            self.BA.set_pose(keyframe.idx, pose, intrinsics)
+            
 class PoseGraphOptimization(g2o.SparseOptimizer):
     def __init__(self, slam_structure):
         super().__init__()
@@ -245,26 +272,27 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
 
     def set_data(self, loops):
         super().clear()
-        keyframe_ids = self.slam_structure.keyframes
+        # keyframe_ids = self.slam_structure.keyframes
+        keyframes = self.slam_structure.key_frames
         anchor=None
         for [kf, *_] in loops:
             if anchor is None or kf < anchor:
                 anchor = kf
                 
-        for i, kf in enumerate(keyframe_ids):
-            pose = g2o.Isometry3d(self.slam_structure.poses[kf][0])
-
+        for i, keyframe in enumerate(keyframes.values()):
+            # pose = g2o.Isometry3d(self.slam_structure.poses[kf][0])
+            pose = keyframe.pose
             fixed = i == 0
             if anchor is not None:
-                fixed = kf <= anchor
-            self.add_vertex(kf, pose, fixed=fixed)
+                fixed = keyframe.idx <= anchor
+            self.add_vertex(keyframe.idx, pose, fixed=fixed)
             # logger.info(f'add vertex:{kf}\n{pose.matrix()}.')
 
             if i != 0:
-                preceding_constraint = g2o.Isometry3d(np.linalg.inv(self.slam_structure.poses[keyframe_ids[i-1]][0]) @ self.slam_structure.poses[kf][0])
+                # preceding_constraint = g2o.Isometry3d(np.linalg.inv(self.slam_structure.poses[keyframe_ids[i-1]][0]) @ self.slam_structure.poses[kf][0])
                 self.add_edge(
-                    vertices=(keyframe_ids[i-1], kf),
-                    measurement=preceding_constraint)
+                    vertices=(keyframe.preceding_keyframe.idx, keyframe.idx),
+                    measurement=keyframe.preceding_constraint)
                 # logger.info(f'add edge:{keyframe_ids[i-1]}, {kf}\n{preceding_constraint.matrix()}.')
    
         for [kf, kf2, meas] in loops:
@@ -273,7 +301,7 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
         self.propagate(anchor)
     
     def propagate(self, ref_id):
-        d = max(20, len(self.slam_structure.keyframes) * 0.1)
+        d = max(20, len(self.slam_structure.key_frames) * 0.1)
         propagator = SmoothEstimatePropagator(self, d)
         propagator.propagate(self.vertex(ref_id))        
     
@@ -282,12 +310,12 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
     
     def update_poses_and_points(
             self, correction=None):
-        keyframe_ids = self.slam_structure.keyframes
-        for kf in keyframe_ids:
-            intrinsics = self.slam_structure.poses[kf][1]
-            uncorrected = g2o.Isometry3d(self.slam_structure.poses[kf][0])
+        for keyframe in self.slam_structure.key_frames.values():
+            # intrinsics = self.slam_structure.poses[kf][1]
+            intrinsics = keyframe.intrinsic
+            uncorrected = keyframe.pose
             if correction is None:
-                vertex = self.vertex(kf)
+                vertex = self.vertex(keyframe.idx)
                 if vertex.fixed():
                     continue
                 corrected = vertex.estimate()
@@ -298,24 +326,35 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
             if (g2o.AngleAxis(delta.rotation()).angle() < 0.02 and
                 np.linalg.norm(delta.translation()) < 0.03):          # 1°, 1mm
                 continue
-            self.slam_structure.poses[kf] = (corrected.matrix(), intrinsics)
-            
+            # self.slam_structure.poses[kf] = (corrected.matrix(), intrinsics)
+            keyframe.pose = corrected
             # update mappoint
-            for (point_id, _) in self.slam_structure.pose_point_map[kf]:
-                (point_3d, color) = self.slam_structure.points[point_id]
-                # old = point_3d
-                if point_id in self.visitedIDs:
-                    # logger.info(f'point:{point_id} appeared before!')
-                    continue
-                self.visitedIDs.add(point_id)
-                old = np.vstack([point_3d[:,None], np.array([1])])
-                # Tc@Tuc^-1@Tc@Tuc^-1
-                # new = corrected.matrix() @ np.linalg.inv(uncorrected.matrix()) @ corrected.matrix() @ np.linalg.inv(uncorrected.matrix()) @ old
-                new = corrected.matrix() @ (np.linalg.inv(uncorrected.matrix()) @ old)
-                new = np.squeeze(new[:3,:])
-                # logger.info(f'Update mappoints old: {point_3d}, new: {new}')
-                self.slam_structure.points[point_id] = (new, color)
-                 
+            # for point_id in keyframe.feature.keypoints_ids:
+            #     mappoint = self.slam_structure.map_points[point_id]
+            #     point_3d, color = mappoint.position, mappoint.color
+            #     # old = point_3d
+            #     if point_id in self.visitedIDs:
+            #         # logger.info(f'point:{point_id} appeared before!')
+            #         continue
+            #     self.visitedIDs.add(point_id)
+            #     old = np.vstack([point_3d[:,None], np.array([1])])
+            #     # Tc@Tuc^-1@Tc@Tuc^-1
+            #     # new = corrected.matrix() @ np.linalg.inv(uncorrected.matrix()) @ corrected.matrix() @ np.linalg.inv(uncorrected.matrix()) @ old
+            #     new = corrected.matrix() @ (np.linalg.inv(uncorrected.matrix()) @ old)
+            #     new = np.squeeze(new[:3,:])
+            #     # logger.info(f'Update mappoints old: {point_3d}, new: {new}')
+            #     # self.slam_structure.points[point_id] = (new, color)
+            #     mappoint.update_position(new)
+            #     # mappoint.set_color(color)
+            for mappoint in self.slam_structure.map_points.values():
+                if mappoint.id not in self.visitedIDs:
+                    self.visitedIDs.add(mappoint.id)
+                    point_3d = mappoint.position
+                    old = np.vstack([point_3d[:,None], np.array([1])])
+                    new = corrected.matrix() @ (np.linalg.inv(uncorrected.matrix()) @ old)
+                    new = np.squeeze(new[:3,:])
+                    mappoint.update_position(new)
+            
     def run_pgo(self):
         self.optimize(20)
         self.extract_pgo_data()

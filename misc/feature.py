@@ -17,9 +17,12 @@ class ImageFeature(object):
         self.idx = idx
         self.height, self.width = image.shape[:2]
 
-        self.keypoints = []      # numpy.ndarray (N,2)
-        self.descriptors = []    # numpy.ndarray (N,256)
+        self.keypoints_info = defaultdict() #{keypoints_id: (keypoints, descriptors)}
         self.keypoints_ids = []
+        self.keypoints = []
+        # self.localize_keypoints = []
+        self.descriptors = []
+        self.unmatched = np.ones(len(self.keypoints), dtype=bool)
         
         self.num_points = 2000
         self.matcher = None
@@ -32,13 +35,16 @@ class ImageFeature(object):
 
         self._lock = Lock()
 
-    def extract(self):
-        keypoints, descriptors = r2d2.update_image(self.image, self.num_points)
+    def update_keypoints_info(self):
+        self.keypoints_ids = [keypoint_id for keypoint_id in self.keypoints_info.keys()]
+        self.keypoints = [self.keypoints_info[keypoint_id][0] for keypoint_id in self.keypoints_ids]
+        self.descriptors = [self.keypoints_info[keypoint_id][1] for keypoint_id in self.keypoints_ids]
+        self.unmatched = np.ones(len(self.keypoints), dtype=bool)
+        
+    def extract(self, num_points, update=True):
+        im_copy = self.image.copy()
+        keypoints, descriptors = r2d2.update_image(im_copy, num_points)
         if descriptors is None:
-            self.keypoints = np.array([])
-            self.descriptors = np.array([])
-            self.keypoints_ids = np.array([])
-            self.unmatched = np.array([])
             return
         keypoints = keypoints[:,:2].astype(int)
         kps_filtered = []
@@ -49,30 +55,38 @@ class ImageFeature(object):
                 continue    
             kps_filtered.append(keypoints[i])
             des_filtered.append(descriptors[i])
-             
-        self.keypoints = np.vstack(kps_filtered)
-        self.descriptors = np.vstack(des_filtered)
-        # init the keypoints_ids, later will be updated by ids of map points
-        self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
-        self.unmatched = np.ones(len(self.keypoints), dtype=bool)
-    
+        # if update:
+        #     self.keypoints = np.vstack(kps_filtered)
+        #     self.descriptors = np.vstack(des_filtered)
+        #     # init the keypoints_ids, later will be updated by ids of map points
+        #     self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
+        #     self.unmatched = np.ones(len(self.keypoints), dtype=bool)
+        # else:
+        return np.vstack(kps_filtered), np.vstack(des_filtered)
+        
     def draw_keypoints(self):
+        
         if len(self.image.shape) == 2:
             image = np.repeat(self.image[..., np.newaxis], 3, axis=2)
         else:
             image = self.image
+        img = image.copy()
         for keypoint in self.keypoints:
                 coord = (int(keypoint[0]), int(keypoint[1]))
                 cv2.circle(
-                                image,
+                                img,
                                 coord,
                                 3,
                                 color=[25, 255, 20],
                                 thickness=-1
                             )
-        cv2.imwrite(f'../datasets/temp_data/localize_tracking/{self.idx}.png', image)
+        cv2.imwrite(f'../datasets/temp_data/localize_tracking/{self.idx}.png', img)
         
     def find_matches(self, predictions, descriptors):
+        '''
+        Match keypoints in the current frame to the map.
+        returns: list of (map_idx, query_idx)? tuples
+        '''
         matches = dict()
         distances = defaultdict(lambda: float('inf'))
         for m, query_idx, train_idx in self.matched_by(descriptors):
