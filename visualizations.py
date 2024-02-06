@@ -71,8 +71,8 @@ def plot_points(filepath, slam_structure):
     point_colors = []
     for mappoint in slam_structure.map_points.values():
         point_id = mappoint.id
-        if point_id not in counts or counts[point_id] <= 3:
-            continue
+        # if point_id not in counts or counts[point_id] <= 3:
+        #     continue
         point_3d, point_color = mappoint.position, mappoint.color
         point_cloud.append(point_3d)
         point_colors.append(point_color)

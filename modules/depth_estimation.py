@@ -1,10 +1,13 @@
 
 import torch
 import torch.nn.functional as F
+from torchvision.transforms import Compose
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-
-
+import cv2
+import numpy as np
+from depth_anything.depth_anything.dpt import DepthAnything
+from depth_anything.depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet 
 import models.depth.models as models
 
 
@@ -73,6 +76,60 @@ class DepthEstimatorFCDenseNet57(DepthEstimatorBase):
 
         return depth
 
+class DepthEstimatorDepthAnything(DepthEstimatorBase):
+    def __init__(self, encoder:['vits', 'vitb', 'vitl'], multiplier=1) -> None:
+        super().__init__()
+        self.multiplier = multiplier
+        self.DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.depth_anything = DepthAnything.from_pretrained('LiheYoung/depth_anything_{}14'.format(encoder)).to(self.DEVICE).eval()
+        
+        self.transform = Compose([
+        Resize(
+            width=518,
+            height=518,
+            resize_target=False,
+            keep_aspect_ratio=True,
+            ensure_multiple_of=14,
+            resize_method='lower_bound',
+            image_interpolation_method=cv2.INTER_CUBIC,
+        ),
+        NormalizeImage(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        PrepareForNet(),
+        ])
+        
+        self.depth = None
+        self.cv_image = None
+        self.save_id = 0
+        
+    def __call__(self, image, mask):
+        image = image.permute(1, 2, 0).detach().cpu().numpy()*255
+        cv_image = image.astype(np.uint8)
+        self.cv_image = cv_image
+        h, w = cv_image.shape[:2]
+        
+        image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB) / 255.0
+        image = self.transform({'image': image})['image']
+        image = torch.from_numpy(image).unsqueeze(0).to(self.DEVICE)
+        # image = torch.from_numpy(image).unsqueeze(0).to(self.DEVICE)
+        with torch.no_grad():
+            depth = self.depth_anything(image)
+        depth = F.interpolate(depth[None], (h, w), mode='bilinear', align_corners=False)[0, 0]
+        self.depth = depth
+        
+        # depth = (depth - depth.min()) / (depth.max() - depth.min()) * self.multiplier
+        # depth_cv = depth.cpu().numpy().astype(np.uint8)
+        # depth_color = cv2.applyColorMap(depth_cv, cv2.COLORMAP_INFERNO)
+        # combined_results = cv2.hconcat([cv_image, depth_color])
+        # cv2.imwrite('depth.png', combined_results)
+        # breakpoint()
+        return depth
 
-
+    def visualize(self):
+        depth_cv = (self.depth - self.depth.min()) / (self.depth.max() - self.depth.min()) * 255.0
+        depth_cv = self.depth.cpu().numpy().astype(np.uint8)
+        depth_color = cv2.applyColorMap(depth_cv, cv2.COLORMAP_INFERNO)
+        combined_results = cv2.hconcat([self.cv_image, depth_color])
+        cv2.imwrite(f'../datasets/temp_data/depth/{self.save_id}.png', combined_results)
+        self.save_id += 1
+        
 # TODO: Wrapper for depth estimation network

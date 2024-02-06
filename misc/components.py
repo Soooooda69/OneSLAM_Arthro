@@ -79,7 +79,7 @@ class Frame(object):
         '''
         R = self.transform_matrix[:3, :3]
         t = self.transform_matrix[:3, 3]
-        return R.dot(points) + t
+        return R.dot(points) + t[:, None]
 
     def itransform(self, points):   # from camera coordinates
         '''
@@ -87,9 +87,9 @@ class Frame(object):
         Args:
             points: a point or an array of points, of shape (3,) or (3, N).
         '''
-        R = self.transform_matrix[:3, :3]
-        t = self.transform_matrix[:3, 3]
-        return R.T.dot(points - t[:, None])
+        R = self.itransform_matrix[:3, :3]
+        t = self.itransform_matrix[:3, 3]
+        return R.dot(points) + t[:, None]
     
     def project(self, points): 
         '''
@@ -152,7 +152,8 @@ class Frame(object):
                 [self.get_descriptor(j)])
             measurements.append((i, meas))
             self.set_matched(j)
-        
+        return matches
+    
     def get_keypoint(self, i):
         return self.feature.get_keypoint(i)
     def get_descriptor(self, i):

@@ -3,7 +3,7 @@ import g2o
 from g2o.contrib import SmoothEstimatePropagator
 import logging
 from misc.components import Frame, KeyFrame, MapPoint
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('logfile.txt')
 
 class BundleAdjuster(g2o.SparseOptimizer):
     def __init__(self, use_sparse_solver=False):
@@ -117,7 +117,7 @@ class BundleAdjuster(g2o.SparseOptimizer):
         sbacam = g2o.SBACam(pose.orientation(), pose.position())
         sbacam.set_cam(fx, fy, cx, cy, 0)
         self.vertex(pose_id * 2).set_estimate(sbacam)
-
+    
     def get_point(self, point_id):
         return self.vertex(point_id * 2 + 1).estimate()
     
@@ -144,26 +144,24 @@ class LocalBA:
         # threshold for confidence interval of 95%
         self.huber_threshold = 5.991
         
-    def set_frame_data(self, frame_idx, fixed):
+    def set_frame_data(self, frame_idx, fixed=False):
         # pose, intrinsics = self.slam_sturcture.poses[frame_idx]
         frame = self.slam_sturcture.all_frames[frame_idx]
         pose = frame.pose
         intrinsics = frame.intrinsic # [fx, fy, cx, cy]
-        self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed=fixed)
-        
+        self.BA.add_pose(frame_idx, g2o.Isometry3d(pose), intrinsics, fixed)
         # Add existing correspondences to BA
         for point_id, (point_2d, des) in frame.feature.keypoints_info.items():
         # for (point_id, point_2d) in self.slam_sturcture.pose_point_map[frame_idx]:
             edge_id = len(self.BA.edge_info)
             edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
-            # print('edge_id:', edge.id())
             # edge = self.BA.add_edge(point_id, frame_idx, point_2d)
             # logger.info(f'frame id: {frame_idx}, add edge:{edge.id()}, point_id:{point_id}.')
             self.BA.edge_info.append([frame_idx, point_id, point_2d])
             if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
                 self.slam_sturcture.pose_point_edges[frame_idx] = []
             self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
-            
+        
     def get_bad_measurements(self):
         bad_measurements = []
         for edge in self.BA.active_edges():
@@ -202,6 +200,8 @@ class LocalBA:
             keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
             self.valid_frames.add(keyframe)
 
+        # for frame in self.slam_sturcture.all_frames.values():
+        #     frame.update_pose(self.BA.get_pose(keyframe.idx).matrix())
         # for point_id in self.slam_sturcture.points.keys():
         #     _, point_color = self.slam_sturcture.points[point_id]
         #     self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
@@ -287,17 +287,19 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
                 fixed = keyframe.idx <= anchor
             self.add_vertex(keyframe.idx, pose, fixed=fixed)
             # logger.info(f'add vertex:{kf}\n{pose.matrix()}.')
-
             if i != 0:
                 # preceding_constraint = g2o.Isometry3d(np.linalg.inv(self.slam_structure.poses[keyframe_ids[i-1]][0]) @ self.slam_structure.poses[kf][0])
                 self.add_edge(
                     vertices=(keyframe.preceding_keyframe.idx, keyframe.idx),
                     measurement=keyframe.preceding_constraint)
                 # logger.info(f'add edge:{keyframe_ids[i-1]}, {kf}\n{preceding_constraint.matrix()}.')
-   
-        for [kf, kf2, meas] in loops:
-            meas = g2o.Isometry3d(meas)
-            self.add_edge((kf, kf2), measurement=meas)
+                
+            if keyframe.loop_keyframe:
+                self.add_edge(keyframe.idx, keyframe.loop_keyframe.idx, keyframe.loop_constraint)
+            
+        # for [kf, kf2, meas] in loops:
+        #     meas = g2o.Isometry3d(meas)
+        #     self.add_edge((kf, kf2), measurement=meas)
         self.propagate(anchor)
     
     def propagate(self, ref_id):

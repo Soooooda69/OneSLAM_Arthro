@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import numpy as np
 
 class KeyframeSelect(ABC):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA) -> None:
@@ -17,12 +18,8 @@ class KeyframeSelect(ABC):
         # Returns matching reference frames
         return []
     
-    def setKeyframe(self, idx):
-        # Update keyframe in slam_structure and localBA
-        # image = self.dataset[idx]['image'].detach().cpu().numpy()
-        # depth = self.depth_estimator(self.dataset[idx]['image'], self.dataset[idx]['mask']).squeeze().detach().cpu().numpy()
-        # mask = self.dataset[idx]['mask'].squeeze().detach().cpu().numpy()
-        # mask[depth < 1e-6] = 0
+    def setKeyframe(self, idx, isLoopKeyframe=False):
+
         self.slam_structure.make_keyframe(idx)
         self.localBA.set_frame_data(idx, fixed=False)
         self.new_keyframe_counter += 1
@@ -56,34 +53,57 @@ class KeyframeSelectSubsample(KeyframeSelect):
 class KeyframeSelectFeature(KeyframeSelect):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA) -> None:
         super().__init__(dataset, depth_estimator, slam_structure, localBA)
-        self.feature_keyframe_cooldown = 400
+        self.cooldown_num = 200
         self.similar_threshold = 0.90
         
-    def decide_keyframe(self, idx):
+    def decide_keyframe(self, idx): 
         self.keyframe_cooldown -= 1
+        current_frame = self.slam_structure.all_frames[idx]
         if self.keyframe_cooldown <= 0:
             # Check if last keyframe was old
             self.make_keyframe = True
         else:
             # Compare similarity of tracked points between last keyframe and current frame
-            # last_keyframe = self.slam_structure.keyframes[-1]
-            # last_pose_points =  self.slam_structure.pose_point_map[last_keyframe]
-            last_keypoints_ids = list(self.slam_structure.key_frames.values())[-1].feature.keypoints_ids
+            last_keypoints_ids = self.slam_structure.last_keyframe.feature.keypoints_ids
             last_point_ids = set()
             for point_id in last_keypoints_ids: last_point_ids.add(point_id)
 
             # current_pose_points = self.slam_structure.pose_point_map[idx]
-            current_point_ids = self.slam_structure.all_frames[idx].feature.keypoints_ids
+            current_point_ids = current_frame.feature.keypoints_ids
             tracked_point_ids = set()
             for point_id in current_point_ids: tracked_point_ids.add(point_id)
             
-            # print(f'jaccard_similarity between{idx}, {last_keyframe}:',self.jaccard_similarity(tracked_point_ids, last_point_ids))
-            # if len(tracked_point_ids)/len(last_point_ids) < 0.8:
+            #TODO: also check the parallax between the keyframes
+            current_pose = current_frame.pose.matrix()
+            last_pose = self.slam_structure.last_keyframe.pose.matrix()
+            parallax = np.linalg.norm(current_pose[:3, 3] - last_pose[:3, 3])
+            # print('parallax:', parallax)
             if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold:
                 self.make_keyframe = True
 
         if self.make_keyframe:
-            self.keyframe_cooldown = self.feature_keyframe_cooldown
+            self.keyframe_cooldown = self.cooldown_num
+    
+    # def decide_keyframe(self, idx):
+    #     self.keyframe_cooldown -= 1
+    #     if idx == 1:
+    #         # Check if last keyframe was old
+    #         self.make_keyframe = True
+    #     else:
+    #         last_keypoints_ids = self.slam_structure.last_keyframe.feature.keypoints_ids
+    #         last_point_ids = set()
+    #         for point_id in last_keypoints_ids: last_point_ids.add(point_id)
+
+    #         # current_pose_points = self.slam_structure.pose_point_map[idx]
+    #         current_point_ids = self.slam_structure.all_frames[idx].feature.keypoints_ids
+    #         tracked_point_ids = set()
+    #         for point_id in current_point_ids: tracked_point_ids.add(point_id)
+            
+    #         if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold and self.keyframe_cooldown <= 0:
+    #             self.make_keyframe = True
+
+    #     if self.make_keyframe:
+    #         self.keyframe_cooldown = self.cooldown_num
     
     def jaccard_similarity(self, set1, set2):
         intersection = len(set1.intersection(set2))

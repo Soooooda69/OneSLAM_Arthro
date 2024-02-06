@@ -3,7 +3,7 @@ import cv2
 
 from collections import defaultdict
 from numbers import Number
-
+import matplotlib.pyplot as plt
 from threading import Thread, Lock 
 from queue import Queue
 from DBoW.R2D2 import R2D2
@@ -24,8 +24,8 @@ class ImageFeature(object):
         self.descriptors = []
         self.unmatched = np.ones(len(self.keypoints), dtype=bool)
         
-        self.num_points = 2000
         self.matcher = None
+        self.matcher_init()
 
         self.cell_size = 15
         self.distance = 25
@@ -33,6 +33,7 @@ class ImageFeature(object):
         self.neighborhood = (
             self.cell_size * self.matching_neighborhood)
 
+        # self.fig, self.ax = plt.subplots()
         self._lock = Lock()
 
     def update_keypoints_info(self):
@@ -42,6 +43,7 @@ class ImageFeature(object):
         self.unmatched = np.ones(len(self.keypoints), dtype=bool)
         
     def extract(self, num_points, update=True):
+        # extract features from image
         im_copy = self.image.copy()
         keypoints, descriptors = r2d2.update_image(im_copy, num_points)
         if descriptors is None:
@@ -55,12 +57,12 @@ class ImageFeature(object):
                 continue    
             kps_filtered.append(keypoints[i])
             des_filtered.append(descriptors[i])
-        # if update:
-        #     self.keypoints = np.vstack(kps_filtered)
-        #     self.descriptors = np.vstack(des_filtered)
-        #     # init the keypoints_ids, later will be updated by ids of map points
-        #     self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
-        #     self.unmatched = np.ones(len(self.keypoints), dtype=bool)
+        if update:
+            self.keypoints = kps_filtered
+            self.descriptors = des_filtered
+            # init the keypoints_ids, later will be updated by ids of map points
+            self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
+            self.unmatched = np.ones(len(self.keypoints), dtype=bool)
         # else:
         return np.vstack(kps_filtered), np.vstack(des_filtered)
         
@@ -76,10 +78,14 @@ class ImageFeature(object):
                 cv2.circle(
                                 img,
                                 coord,
-                                3,
+                                2,
                                 color=[25, 255, 20],
                                 thickness=-1
                             )
+        # update the plot
+        # self.ax.clear()
+        # self.ax.imshow(img)
+        # plt.pause(0.001)
         cv2.imwrite(f'../datasets/temp_data/localize_tracking/{self.idx}.png', img)
         
     def find_matches(self, predictions, descriptors):
@@ -92,7 +98,14 @@ class ImageFeature(object):
         for m, query_idx, train_idx in self.matched_by(descriptors):
             if m.distance > min(distances[train_idx], self.distance):
                 continue
-
+            print(np.vstack(self.keypoints).shape)
+            keypoints1 = [cv2.KeyPoint(x, y, 1) for x, y in predictions]
+            keypoints2 = [cv2.KeyPoint(x, y, 1) for x, y in np.vstack(self.keypoints)]
+            print('kp1,kp2',len(keypoints1), len(keypoints2))
+            # ref_keypoints1 = np.float32([keypoints1[m.queryIdx].pt for m in good_matches])
+            # query_keypoints2 = np.float32([keypoints2[m.trainIdx].pt for m in good_matches])
+            print('predictions', predictions.shape)
+            print('query', len(self.keypoints), self.keypoints[0])
             pt1 = predictions[query_idx]
             pt2 = self.keypoints[train_idx].pt
             dx = pt1[0] - pt2[0]
@@ -107,7 +120,8 @@ class ImageFeature(object):
 
     def matched_by(self, descriptors):
         with self._lock:
-            unmatched_descriptors = self.descriptors[self.unmatched]
+            # unmatched_descriptors = self.descriptors[self.unmatched]
+            unmatched_descriptors = [x for x, flag in zip(self.descriptors, self.unmatched) if flag]
             if len(unmatched_descriptors) == 0:
                 return []
             lookup = dict(zip(
@@ -115,11 +129,11 @@ class ImageFeature(object):
                 np.where(self.unmatched)[0]))
 
         matches = self.matcher.knnMatch(
-            np.array(descriptors), unmatched_descriptors, k=2)
+            np.array(descriptors).astype(np.float32), np.array(unmatched_descriptors).astype(np.float32), k=2)
     
-        return [(m, m.queryIdx, m.trainIdx) for m in matches]
+        return [(m, m.queryIdx, m.trainIdx) for m, _ in matches]
 
-    def matcher(self):
+    def matcher_init(self):
         # FLANN matcher parameters
         FLANN_INDEX_KDTREE = 1
         index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)

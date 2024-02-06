@@ -80,3 +80,4 @@ class Helper:
 if __name__ == "__main__":
     helper = Helper()
     helper.make_video('../datasets/temp_data/localize_tracking','../datasets/temp_data/localize_tracking/tracking.mp4', 15)
+    helper.make_video('../datasets/temp_data/depth','../datasets/temp_data/depth/depth.mp4', 15)

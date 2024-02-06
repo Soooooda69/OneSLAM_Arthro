@@ -15,7 +15,7 @@ r2d2 = R2D2()
 import cv2
 import logging
 from misc.components import Frame, Camera, KeyFrame, MapPoint
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('logfile.txt')
 
 from visualizations import *
 
@@ -39,16 +39,10 @@ class SLAMStructure:
         self.key_frames = dict() #frame_idx: KeyFrame instance
         self.lc_frames = dict() #frame_idx: localize Frame instance
         self.map_points = dict() #point_id: MapPoint instance
-        self.lc_frames = dict() #frame_idx: localize Frame instance
-        # self.frames = []
-        # self.keyframes = []
-        # self.poses = dict() # frame_idx: (pose, intrinsics)
 
-        # self.points = dict() # Set of point instances {id: (3d, color)}
-        # self.pose_point_map = dict() # Pose to point associations {pose_id: [...(point_id, 2d)]}
         self.pose_point_edges = dict() # Stores edges for every pose 
 
-
+        self.last_keyframe = None
         # self.pose_images = dict() # Store keyframe images for visualizations
         # self.pose_depths = dict() # Store keyframe depths for possible later use
         # self.pose_masks =  dict() # Store keyframe masks for possible later use
@@ -81,44 +75,38 @@ class SLAMStructure:
         cam = Camera(intrinsic)
         frame = Frame(frame_idx, pose, mask, image, cam, timestamp=None)
         self.all_frames[frame_idx] = frame
-        
+        return frame
+    
     def make_keyframe(self, frame_idx) -> None:
         # Make an existing frame into a new keyframe
         # Assert that frame has been registered and is not already a keyframe
         assert frame_idx not in self.key_frames.keys()
-        # if frame_idx in self.key_frames.keys():
-        #     return
-        # print(f"Making frame {frame_idx} into keyframe")
-        
+ 
         frame = self.all_frames[frame_idx]
         keyframe = frame.to_keyframe()
-        # keyframe.update_preceding(list(self.key_frames.values())[-1])
-        if frame_idx != 1:
-            keyframe.update_preceding(list(self.key_frames.values())[-1])
+
+        if self.last_keyframe is not None:
+            keyframe.update_preceding(self.last_keyframe)
+            # keyframe.update_preceding(list(self.key_frames.values())[-1])
+        self.last_keyframe = keyframe
+            
         self.key_frames[frame_idx] = keyframe
         
-        # # Store additional information for later use (visualization, ...)
-        # self.pose_images[frame_idx] = image
-        # self.pose_depths[frame_idx] = depth
-        # self.pose_masks[frame_idx] = mask
 
-        # Add frame to keyframes
-        # self.keyframes.append(frame_idx)
-
-    # Registering new points and correspondences
-
-    def add_point(self, point_3d, point_color):
+    def add_mappoint(self, point_3d, point_color, point_descriptor):
         # Adding a new point
 
-        # Get id for new point
-        point_id = len(self.points)
+        # # Get id for new point
+        # point_id = len(self.points)
 
-        # Add point to current map
-        # Fix first added point in order to preserve scale
-        self.points[point_id] = (point_3d, point_color)
+        # # Add point to current map
+        # # Fix first added point in order to preserve scale
+        # self.points[point_id] = (point_3d, point_color)
         # self.BA.add_point(point_id, point_3d)
-
-        return point_id
+        # point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
+        mapPoint = MapPoint(point_3d, point_descriptor, point_color)
+        self.map_points[mapPoint.id] = mapPoint
+        return mapPoint
 
     def add_correspondence(self, frame_idx, point_id, point_2d):
         # Add a new correspondence
@@ -169,14 +157,14 @@ class SLAMStructure:
             
             
     def get_previous_poses(self, n):
-        # Return the last n pose estimates
+        # Return the last n keyframe pose estimates
 
-        sorted_frames_idx = sorted(self.all_frames.keys())
-        poses = [] 
-        for frame_idx in sorted_frames_idx[-n:]:
-            pose = self.all_frames[frame_idx].pose.matrix()
+        # sorted_frames_idx = sorted(self.key_frames.keys())
+        # self.key_frames = dict(sorted(self.key_frames.items()))
+        poses = []
+        for frame in self.all_frames.values():
+            pose = frame.pose.matrix()
             poses.append(pose)
-        
         return poses 
 
     def get_point(self, point_id):
@@ -190,9 +178,11 @@ class SLAMStructure:
 
     # Pose estimation/Mapping functions
     
-    def localize_frame(self, frame, update_pose=False, ransac=False):
+    def localize_frame(self, frame, update_pose=True, ransac=False):
         # Localize a frame against current map
-
+        
+        # TODO: Need scale correction for pose estimation
+        
         # assert frame in self.all_frames.keys()
         # print(f"Localizing frame {frame.idx}")
         # current_pose, intrinsics = self.poses[frame_idx]
@@ -202,6 +192,7 @@ class SLAMStructure:
         points_idx_filtered = list(filter(lambda pair: pair in self.valid_points, key_points))
         # points_filtered = frame.feature.keypoints_info[points_idx_filtered]
         points_filtered = [(i, frame.feature.keypoints_info[i][0]) for i in points_idx_filtered]
+        # print(f"Localizing frame {frame.idx} with {len(points_filtered)} correspondences.")
         if len(points_filtered) <= 5:
             return current_pose
         
@@ -230,11 +221,9 @@ class SLAMStructure:
             retval, rvec, tvec = cv2.solvePnP(obj_pts, img_pts, intrinsics_mat, distCoeffs, rvec=rot_vec, tvec=trans_vec)
 
         localized_pose = np.linalg.inv(vecs_to_mat(tvec.squeeze(), rvec.squeeze()))
-
-        # if update_pose:
-        #     self.poses[frame_idx] = (localized_pose, intrinsics)
-        #     self.valid_frames.add(frame_idx)
-        #     self.frames.append(frame_idx)
+        
+        if update_pose:
+            frame.update_pose(localized_pose)
         return localized_pose
     
 
@@ -381,15 +370,15 @@ class SLAMStructure:
         self.exp_root.mkdir(parents=True, exist_ok=True)
         
         # Dump class data as pickles (expect image data)
-        mappoints_dict = {} #{id: (3d, color)}
+        mappoints_dict = {} #{id: (3d, color, descriptor)}
         for mappoint in self.map_points.values():
-            mappoints_dict[mappoint.id] = (mappoint.position, mappoint.color)
+            mappoints_dict[mappoint.id] = (mappoint.position, mappoint.color, mappoint.descriptor)
         with open(self.exp_root / "mappoints.pickle", 'wb') as handle: 
             pickle.dump(mappoints_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
-        keyframes_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose]}
+        keyframes_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose, intrinsic]}
         for keyframe in self.key_frames.values():
-            keyframes_dict[keyframe.idx] = [keyframe.feature.keypoints_info, keyframe.pose.matrix()]
+            keyframes_dict[keyframe.idx] = [keyframe.feature.keypoints_info, keyframe.pose.matrix(), keyframe.intrinsic]
         with open(self.exp_root / "keyframes.pickle", 'wb') as handle:
             pickle.dump(keyframes_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
@@ -398,8 +387,6 @@ class SLAMStructure:
             frames_dict[frame.idx] = [frame.feature.keypoints_info, frame.pose.matrix()]
         with open(self.exp_root / "frames.pickle", 'wb') as handle:
             pickle.dump(frames_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        # with open(self.exp_root / "poses.pickle", 'wb') as handle:
-        #     pickle.dump(self.poses, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         self.write_tum_poses(self.exp_root / "poses_pred.txt")
         self.write_full_tum_poses(self.exp_root / "f_poses_pred.txt")

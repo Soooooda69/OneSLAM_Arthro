@@ -15,7 +15,9 @@ class PoseGuesserLastPose(PoseGuesserBase):
 
     def __call__(self, last_poses):
         if len(last_poses) < 1:
-            return np.identity(4)
+            init_poses = np.identity(4)
+            # init_poses[2, 3] = 1
+            return init_poses
         
         return np.copy(last_poses[-1])
 

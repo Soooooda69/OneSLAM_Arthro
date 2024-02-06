@@ -307,8 +307,11 @@ class PointResamplerR2D2(PointResamplerBase):
         # 2000 to give r2d2 good chances
         # self.num_points = 2000
         
-    def __call__(self, frame):
-        points_to_sample = max(self.min_num_points - len(frame.feature.keypoints), self.min_new_points)
+    def __call__(self, frame, init=False):
+        if init:
+            points_to_sample = 50
+        else:
+            points_to_sample = max(self.min_num_points - len(frame.feature.keypoints), self.min_new_points)
         if len(frame.feature.keypoints) >= self.min_num_points:
             return frame.feature.keypoints, None, None
         
@@ -317,6 +320,6 @@ class PointResamplerR2D2(PointResamplerBase):
 
         current_pose_points = frame.feature.keypoints
         #  extract new features
-        new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=False)
+        new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=True)
         # keep limited number of features
         return current_pose_points, new_2d_points, new_points_descriptor

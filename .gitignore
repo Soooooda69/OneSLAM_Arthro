@@ -9,6 +9,9 @@
 /results/
 /g2opy/
 /trained_models/
+/cotracker/
+/cotracker_new/
+/depth_anything/
 /debug.txt
 /DBoW/r2d2
 /logfile.txt
