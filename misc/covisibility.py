@@ -219,8 +219,8 @@ class CovisibilityGraph(object):
         local = sorted(
             covisible.items(), key=lambda _:_[1], reverse=True)
 
-        id = max([_.id for _ in covisible])
-        loop_frames = [_ for _ in local if _[0].id < id-50]
+        id = max([_.idx for _ in covisible])
+        loop_frames = [_ for _ in local if _[0].idx < id-50]
 
         local = local[:window_size]
         loop_local = []
@@ -245,4 +245,5 @@ class CovisibilityGraph(object):
             local_map.append(kf.mappoints())
             local_keyframes.append(kf)
         local_map = list(set(chain(*local_map)))
+
         return local_map, local_keyframes

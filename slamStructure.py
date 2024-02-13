@@ -14,7 +14,7 @@ from DBoW.R2D2 import R2D2
 r2d2 = R2D2()
 import cv2
 import logging
-from misc.components import Frame, Camera, KeyFrame, MapPoint
+from misc.components import Frame, Camera, KeyFrame, MapPoint, Measurement
 logger = logging.getLogger('logfile.txt')
 
 from visualizations import *
@@ -47,9 +47,6 @@ class SLAMStructure:
         self.reference = None # reference keyframe
         self.preceding = None # last keyframe
         self.current = None 
-        # self.pose_images = dict() # Store keyframe images for visualizations
-        # self.pose_depths = dict() # Store keyframe depths for possible later use
-        # self.pose_masks =  dict() # Store keyframe masks for possible later use
 
         self.valid_points = set() # Points that have been extracted from a BA run
         self.valid_frames = set() # Poses that are localized in the current map
@@ -61,22 +58,13 @@ class SLAMStructure:
         self.graph = graph
     # Registering new frames
 
-    # def add_frame(self, frame_idx, pose, intrinsics):
-    #     # Register a new frame into the SLAM structure
-
-    #     # Assert that frame has not been added already
-    #     assert frame_idx not in self.poses.keys()
-
-    #     # Add new pose
-    #     self.poses[frame_idx] = (pose, intrinsics)
-    #     self.pose_point_map[frame_idx] = []
     
     def add_frame(self, frame_idx, pose):
         intrinsic=self.dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
         mask = self.dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
         image = self.dataset[frame_idx]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
         image = image.astype(np.uint8)
-        cam = Camera(intrinsic)
+        cam = Camera(intrinsic, mask.shape[1], mask.shape[0])
         frame = Frame(frame_idx, pose, mask, image, cam, timestamp=None)
         self.all_frames[frame_idx] = frame
         return frame
@@ -89,14 +77,40 @@ class SLAMStructure:
         frame = self.all_frames[frame_idx]
         keyframe = frame.to_keyframe()
         self.graph.add_keyframe(keyframe)
-        
-        if self.last_keyframe is not None:
-            keyframe.update_preceding(self.last_keyframe)
-            # keyframe.update_preceding(list(self.key_frames.values())[-1])
+        # if self.last_keyframe is not None:
+        #     keyframe.update_preceding(self.last_keyframe)
+        #     # keyframe.update_preceding(list(self.key_frames.values())[-1])
         self.last_keyframe = keyframe
             
         self.key_frames[frame_idx] = keyframe
-        
+    
+    def add_map_meas(self, keyframe):
+        mappoints = []
+        measurements = []
+        for mappoint_id, (keypoint, descriptor) in keyframe.feature.keypoints_info.items():
+            mappoint = self.map_points[mappoint_id]
+            mappoints.append(mappoint)
+            
+            meas = Measurement(
+                Measurement.Source.MAPPING,
+                [keypoint],
+                [descriptor])
+            meas.mappoint = mappoint
+            meas.view = keyframe.transform(mappoint.position)
+            measurements.append(meas)
+            
+        return mappoints, measurements
+    
+    def add_measurements(self, keyframe, mappoints, measurements):
+        for mappoint, measurement in zip(mappoints, measurements):
+            self.graph.add_mappoint(mappoint)
+            self.graph.add_measurement(keyframe, mappoint, measurement)
+            mappoint.increase_measurement_count()  
+            
+    def create_points(self, keyframe):
+        mappoints, measurements = self.add_map_meas(keyframe)
+        self.add_measurements(keyframe, mappoints, measurements)
+                
 
     def add_mappoint(self, point_3d, point_color, point_descriptor):
         # Adding a new point
@@ -167,7 +181,7 @@ class SLAMStructure:
         # sorted_frames_idx = sorted(self.key_frames.keys())
         # self.key_frames = dict(sorted(self.key_frames.items()))
         poses = []
-        for frame in self.key_frames.values():
+        for frame in self.all_frames.values():
             pose = frame.pose.matrix()
             poses.append(pose)
         return poses 
@@ -228,11 +242,13 @@ class SLAMStructure:
     def filter_points(self, frame):
         local_mappoints = self.graph.get_local_map_v2(
             [self.preceding, self.reference])[0]
-
-        can_view = frame.can_view(local_mappoints)
-        print('filter points:', len(local_mappoints), can_view.sum(), 
-            len(self.preceding.mappoints()),
-            len(self.reference.mappoints()))
+        points = []
+        for point in local_mappoints:
+            points.append(point.position)
+        can_view = frame.can_view(points)
+        # print('filter points:', len(local_mappoints), 'can view',can_view.sum(), 
+        #     'preceding map:', len(self.preceding.mappoints()),
+        #     'reference map:', len(self.reference.mappoints()))
         
         checked = set()
         filtered = []
@@ -243,7 +259,7 @@ class SLAMStructure:
             pt.increase_projection_count()
             filtered.append(pt)
             checked.add(pt)
-
+        # print('checked:', len(checked))
         for reference in set([self.preceding, self.reference]):
             for pt in reference.mappoints():  # neglect can_view test
                 if pt in checked or pt.is_bad():

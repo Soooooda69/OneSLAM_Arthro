@@ -21,7 +21,7 @@ class KeyframeSelect(ABC):
     def setKeyframe(self, idx, isLoopKeyframe=False):
 
         self.slam_structure.make_keyframe(idx)
-        self.localBA.set_frame_data(idx, fixed=False)
+        # self.localBA.set_frame_data(idx, fixed=False)
         self.new_keyframe_counter += 1
         self.new_keyframes.append(idx)
         # self.slam_structure.all_frames[idx].to_keyframe()

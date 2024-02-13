@@ -98,15 +98,15 @@ class ImageFeature(object):
         for m, query_idx, train_idx in self.matched_by(descriptors):
             if m.distance > min(distances[train_idx], self.distance):
                 continue
-            print(np.vstack(self.keypoints).shape)
-            keypoints1 = [(x, y) for x, y, _ in predictions]
+            # print(np.vstack(self.keypoints).shape)
+            keypoints1 = [(x, y) for x, y in predictions]
             # keypoints2 = [cv2.KeyPoint(x, y, 1) for x, y in np.vstack(self.keypoints)]
             keypoints1 = np.vstack(keypoints1)
             keypoints2 = np.vstack(self.keypoints)
             # print('kp1,kp2',len(keypoints1), len(keypoints2))
 
-            print('predictions', predictions.shape)
-            print('query', len(self.keypoints), self.keypoints[0])
+            # print('predictions', predictions.shape)
+            # print('query', len(self.keypoints), self.keypoints[0])
             pt1 = keypoints1[query_idx]
             pt2 = keypoints2[train_idx]
             dx = pt1[0] - pt2[0]

@@ -163,58 +163,58 @@ class LocalBA:
                 self.slam_sturcture.pose_point_edges[frame_idx] = []
             self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
     
-    # def clear(self):
-    #     self.BA.clear()
-    #     self.localMap = set()
-    #     # self.edge_info = []
+    def clear(self):
+        self.BA.clear()
+        self.localMap = set()
+        # self.edge_info = []
         
-    # def set_data(self, fix_idx, adjust_idx):
-    #     self.clear()
-    #     for frame_idx in adjust_idx:
-    #         keyframe = self.slam_sturcture.key_frames[frame_idx]
-    #         self.BA.add_pose(frame_idx, g2o.Isometry3d(keyframe.pose), keyframe.intrinsic, False)
-    #         # Add points
-    #         for point_id, (point_2d, des) in keyframe.feature.keypoints_info.items():
-    #             mappoint = self.slam_sturcture.map_points[point_id]
-    #             if mappoint not in self.localMap:
-    #                 self.BA.add_point(point_id, mappoint.position)
-    #                 self.localMap.add(mappoint)
+    def set_data(self, fix_idx, adjust_idx):
+        self.clear()
+        for frame_idx in adjust_idx:
+            keyframe = self.slam_sturcture.key_frames[frame_idx]
+            self.BA.add_pose(frame_idx, g2o.Isometry3d(keyframe.pose), keyframe.intrinsic, False)
+            # Add points
+            for point_id, (point_2d, des) in keyframe.feature.keypoints_info.items():
+                mappoint = self.slam_sturcture.map_points[point_id]
+                if mappoint not in self.localMap:
+                    self.BA.add_point(point_id, mappoint.position)
+                    self.localMap.add(mappoint)
               
-    #             # Add existing correspondences to BA
-    #             edge_id = len(self.edge_info)
-    #             edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
-    #             self.edge_info.append([frame_idx, point_id, point_2d])
+                # Add existing correspondences to BA
+                edge_id = len(self.edge_info)
+                edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
+                self.edge_info.append([frame_idx, point_id, point_2d])
 
-    #             if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
-    #                 self.slam_sturcture.pose_point_edges[frame_idx] = []
-    #             self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
+                if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
+                    self.slam_sturcture.pose_point_edges[frame_idx] = []
+                self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
                 
-    #     for frame_idx in fix_idx:
-    #         keyframe = self.slam_sturcture.key_frames[frame_idx]
-    #         self.BA.add_pose(frame_idx, g2o.Isometry3d(keyframe.pose), keyframe.intrinsic, True)
-    #         # Add points
-    #         for point_id, (point_2d, des) in keyframe.feature.keypoints_info.items():
-    #             mappoint = self.slam_sturcture.map_points[point_id]
-    #             # Add only edges that are in the local map
-    #             if mappoint in self.localMap:
-    #                 # Add existing correspondences to BA
-    #                 edge_id = len(self.edge_info)
-    #                 edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
-    #                 self.edge_info.append([frame_idx, point_id, point_2d])
-    #                 if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
-    #                     self.slam_sturcture.pose_point_edges[frame_idx] = []
-    #                 self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
+        for frame_idx in fix_idx:
+            keyframe = self.slam_sturcture.key_frames[frame_idx]
+            self.BA.add_pose(frame_idx, g2o.Isometry3d(keyframe.pose), keyframe.intrinsic, True)
+            # Add points
+            for point_id, (point_2d, des) in keyframe.feature.keypoints_info.items():
+                mappoint = self.slam_sturcture.map_points[point_id]
+                # Add only edges that are in the local map
+                if mappoint in self.localMap:
+                    # Add existing correspondences to BA
+                    edge_id = len(self.edge_info)
+                    edge = self.BA.add_edge(edge_id, point_id, frame_idx, point_2d)
+                    self.edge_info.append([frame_idx, point_id, point_2d])
+                    if frame_idx not in self.slam_sturcture.pose_point_edges.keys():
+                        self.slam_sturcture.pose_point_edges[frame_idx] = []
+                    self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
 
-    # def remove_bad_measurements(self):
-    #         count = 0
-    #         for [frame_idx, point_id, point_2d] in self.bad_measurements:
-    #             for keyframe in self.slam_sturcture.key_frames.values():
-    #                 if frame_idx == keyframe.idx:
-    #                     if point_id in keyframe.feature.keypoints_info.keys():
-    #                         del keyframe.feature.keypoints_info[point_id]
-    #                         count +=1
-    #             keyframe.feature.update_keypoints_info()
-    #         print(f'Bad measurements removed: {count}')  
+    def remove_bad_measurements(self):
+            count = 0
+            for [frame_idx, point_id, point_2d] in self.bad_measurements:
+                for keyframe in self.slam_sturcture.key_frames.values():
+                    if frame_idx == keyframe.idx:
+                        if point_id in keyframe.feature.keypoints_info.keys():
+                            del keyframe.feature.keypoints_info[point_id]
+                            count +=1
+                keyframe.feature.update_keypoints_info()
+            print(f'Bad measurements removed: {count}')  
 
     def get_bad_measurements(self):
         self.bad_measurements = []
@@ -234,23 +234,31 @@ class LocalBA:
         self.valid_frames = set()
         # self.extract_ba_data()
     
+    # def extract_ba_data(self):
+    #     for keyframe in self.slam_sturcture.key_frames.values():
+    #         keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
+    #         self.valid_frames.add(keyframe)
+
+    #     # for frame in self.slam_sturcture.all_frames.values():
+    #     #     frame.update_pose(self.BA.get_pose(keyframe.idx).matrix())
+    #     # for point_id in self.slam_sturcture.points.keys():
+    #     #     _, point_color = self.slam_sturcture.points[point_id]
+    #     #     self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
+    #     #     self.slam_sturcture.valid_points.add(point_id)
+            
+    #     for mappoint in self.slam_sturcture.map_points.values():
+    #     # for mappoint in self.localMap:
+    #         mappoint.update_position(self.BA.get_point(mappoint.id))
+    #         self.slam_sturcture.valid_points.add(mappoint.id)
+    
     def extract_ba_data(self):
         for keyframe in self.slam_sturcture.key_frames.values():
             keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
             self.valid_frames.add(keyframe)
-
-        # for frame in self.slam_sturcture.all_frames.values():
-        #     frame.update_pose(self.BA.get_pose(keyframe.idx).matrix())
-        # for point_id in self.slam_sturcture.points.keys():
-        #     _, point_color = self.slam_sturcture.points[point_id]
-        #     self.slam_sturcture.points[point_id] = (self.BA.get_point(point_id), point_color)
-        #     self.slam_sturcture.valid_points.add(point_id)
             
-        for mappoint in self.slam_sturcture.map_points.values():
-        # for mappoint in self.localMap:
+        for mappoint in self.localMap:
             mappoint.update_position(self.BA.get_point(mappoint.id))
             self.slam_sturcture.valid_points.add(mappoint.id)
-            
 
     def update_ba_data(self):
         for mappoint in self.slam_sturcture.map_points.values():

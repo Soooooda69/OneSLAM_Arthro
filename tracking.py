@@ -91,7 +91,7 @@ class Tracking:
         self.new_point_ids = []
     
     def refine_pose(self, pose, intrinsics, measurements):
-        assert len(measurements) >= self.min_measurements, (
+        assert len(measurements) >= 10, (
             'Not enough points')
             
         self.optimizer.clear()
@@ -99,10 +99,9 @@ class Tracking:
 
         for i, m in enumerate(measurements):
             self.optimizer.add_point(i, m.mappoint.position, fixed=True)
-            self.optimizer.add_edge(0, i, 0, m)
-
-        self.optimizer.optimize(self.max_iterations)
-        return self.optimizer.get_pose(0)
+            self.optimizer.add_edge(0, i, 0, m.xy)
+        self.optimizer.optimize(10)
+        return self.optimizer.get_pose(0).matrix()
     
     # Point tracking done
     def process_section(self, section_indices, dataset, slam_structure, 
@@ -153,7 +152,7 @@ class Tracking:
                     # slam_structure.map_points[mapPoint.id] = mapPoint
                     mapPoint = slam_structure.add_mappoint(point_3d, point_color, point_descriptor)
                     
-                    self.localBA.BA.add_point(mapPoint.id, point_3d)
+                    # self.localBA.BA.add_point(mapPoint.id, point_3d)
                     self.new_point_ids.append(mapPoint.id)
                     
                     # update frame

@@ -20,8 +20,8 @@ class Camera(object):
             [0, self.fy, self.cy], 
             [0, 0, 1]])
 
-        # self.frustum_near = frustum_near
-        # self.frustum_far = frustum_far
+        self.frustum_near = 0.1
+        self.frustum_far = 2
 
         self.width = width
         self.height = height
@@ -57,7 +57,26 @@ class Frame(object):
     
     def __hash__(self):
         return self.idx
-      
+    
+    def can_view(self, points, ground=False, margin=20):    # Frustum Culling
+        points = np.transpose(points)
+        (u, v), depth = self.project(self.transform(points))
+
+        if ground:
+            return np.logical_and.reduce([
+                depth >= self.cam.frustum_near,
+                depth <= self.cam.frustum_far,
+                u >= - margin,
+                u <= self.cam.width + margin])
+        else:
+            return np.logical_and.reduce([
+                depth >= self.cam.frustum_near,
+                depth <= self.cam.frustum_far,
+                u >= - margin,
+                u <= self.cam.width + margin,
+                v >= - margin,
+                v <= self.cam.height + margin])
+    
     def update_pose(self, pose):
         if isinstance(pose, g2o.Isometry3d):
             self.pose = pose
@@ -137,7 +156,6 @@ class Frame(object):
         points = np.transpose(points)
         proj, _ = self.project(self.transform(points))
         proj = proj.transpose()
-
         matches = self.feature.find_matches(proj, descriptors)
         matches = dict(matches)
 
@@ -292,9 +310,9 @@ class MapPoint(GraphMapPoint):
 
 class Measurement(GraphMeasurement):
     
-    Source = Enum('Measurement.Source', ['TRIANGULATION', 'TRACKING', 'REFIND'])
+    Source = Enum('Measurement.Source', ['MAPPING', 'TRACKING', 'REFIND'])
 
-    def __init__(self, type, source, keypoints, descriptors):
+    def __init__(self, source, keypoints, descriptors):
         super().__init__()
 
         self.source = source
@@ -307,7 +325,7 @@ class Measurement(GraphMeasurement):
         #     self.xyx = np.array([
         #         *keypoints[0].pt, keypoints[1].pt[0]])
 
-        self.triangulation = (source == self.Source.TRIANGULATION)
+        # self.triangulation = (source == self.Source.TRIANGULATION)
 
     def get_descriptor(self, i=0):
         return self.descriptors[i]
