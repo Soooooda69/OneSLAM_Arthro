@@ -32,7 +32,7 @@ def vecs_to_mat(trans_vec, rot_vec):
 
 
 class SLAMStructure:
-    def __init__(self, dataset, name='', output_folder='./experiments') -> None:
+    def __init__(self, dataset, graph, name='', output_folder='./experiments') -> None:
         self.dataset = dataset
         # Internal storage
         self.all_frames = dict() #frame_idx: Frame instance
@@ -43,6 +43,10 @@ class SLAMStructure:
         self.pose_point_edges = dict() # Stores edges for every pose 
 
         self.last_keyframe = None
+        
+        self.reference = None # reference keyframe
+        self.preceding = None # last keyframe
+        self.current = None 
         # self.pose_images = dict() # Store keyframe images for visualizations
         # self.pose_depths = dict() # Store keyframe depths for possible later use
         # self.pose_masks =  dict() # Store keyframe masks for possible later use
@@ -54,7 +58,7 @@ class SLAMStructure:
         now = datetime.now()
         self.exp_name = now.strftime("exp_%m%d%Y_%H:%M:%S") if name == '' else name
         self.exp_root = Path(output_folder) / self.exp_name
-    
+        self.graph = graph
     # Registering new frames
 
     # def add_frame(self, frame_idx, pose, intrinsics):
@@ -84,7 +88,8 @@ class SLAMStructure:
  
         frame = self.all_frames[frame_idx]
         keyframe = frame.to_keyframe()
-
+        self.graph.add_keyframe(keyframe)
+        
         if self.last_keyframe is not None:
             keyframe.update_preceding(self.last_keyframe)
             # keyframe.update_preceding(list(self.key_frames.values())[-1])
@@ -162,7 +167,7 @@ class SLAMStructure:
         # sorted_frames_idx = sorted(self.key_frames.keys())
         # self.key_frames = dict(sorted(self.key_frames.items()))
         poses = []
-        for frame in self.all_frames.values():
+        for frame in self.key_frames.values():
             pose = frame.pose.matrix()
             poses.append(pose)
         return poses 
@@ -170,11 +175,6 @@ class SLAMStructure:
     def get_point(self, point_id):
         assert point_id in self.points.keys()
         return self.points[point_id]
-
-    def get_pose_points(self, frame_idx):
-        assert frame_idx in self.poses.keys()
-
-        return self.pose_point_map[frame_idx].copy()
 
     # Pose estimation/Mapping functions
     
@@ -214,7 +214,6 @@ class SLAMStructure:
         intrinsics_mat[0, 2] = intrinsics[2]
         intrinsics_mat[1, 2] = intrinsics[3]
         distCoeffs = np.array([0., 0., 0., 0.])
-
         if ransac:
             retval, rvec, tvec, inliers = cv2.solvePnPRansac(obj_pts, img_pts, intrinsics_mat, distCoeffs, rvec=rot_vec, tvec=trans_vec)
         else:
@@ -225,6 +224,34 @@ class SLAMStructure:
         if update_pose:
             frame.update_pose(localized_pose)
         return localized_pose
+    
+    def filter_points(self, frame):
+        local_mappoints = self.graph.get_local_map_v2(
+            [self.preceding, self.reference])[0]
+
+        can_view = frame.can_view(local_mappoints)
+        print('filter points:', len(local_mappoints), can_view.sum(), 
+            len(self.preceding.mappoints()),
+            len(self.reference.mappoints()))
+        
+        checked = set()
+        filtered = []
+        for i in np.where(can_view)[0]:
+            pt = local_mappoints[i]
+            if pt.is_bad():
+                continue
+            pt.increase_projection_count()
+            filtered.append(pt)
+            checked.add(pt)
+
+        for reference in set([self.preceding, self.reference]):
+            for pt in reference.mappoints():  # neglect can_view test
+                if pt in checked or pt.is_bad():
+                    continue
+                pt.increase_projection_count()
+                filtered.append(pt)
+
+        return filtered
     
 
     def filter(self, max_allowed_distance=None, reprojection_error_threshold=1000000, min_view_num=0):
@@ -286,7 +313,7 @@ class SLAMStructure:
             visible_points[keyframe.idx] = [] 
 
         for mappoint in self.map_points.values():
-            visible_frames[mappoint.idx] = []
+            visible_frames[mappoint.id] = []
 
             if point_id not in reprojection_errors.keys():
                 continue

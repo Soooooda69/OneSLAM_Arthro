@@ -19,7 +19,7 @@ class ImageFeature(object):
 
         self.keypoints_info = defaultdict() #{keypoints_id: (keypoints, descriptors)}
         self.keypoints_ids = []
-        self.keypoints = []
+        self.keypoints = [] # list of keypoints 2d coordinates
         # self.localize_keypoints = []
         self.descriptors = []
         self.unmatched = np.ones(len(self.keypoints), dtype=bool)
@@ -99,15 +99,16 @@ class ImageFeature(object):
             if m.distance > min(distances[train_idx], self.distance):
                 continue
             print(np.vstack(self.keypoints).shape)
-            keypoints1 = [cv2.KeyPoint(x, y, 1) for x, y in predictions]
-            keypoints2 = [cv2.KeyPoint(x, y, 1) for x, y in np.vstack(self.keypoints)]
-            print('kp1,kp2',len(keypoints1), len(keypoints2))
-            # ref_keypoints1 = np.float32([keypoints1[m.queryIdx].pt for m in good_matches])
-            # query_keypoints2 = np.float32([keypoints2[m.trainIdx].pt for m in good_matches])
+            keypoints1 = [(x, y) for x, y, _ in predictions]
+            # keypoints2 = [cv2.KeyPoint(x, y, 1) for x, y in np.vstack(self.keypoints)]
+            keypoints1 = np.vstack(keypoints1)
+            keypoints2 = np.vstack(self.keypoints)
+            # print('kp1,kp2',len(keypoints1), len(keypoints2))
+
             print('predictions', predictions.shape)
             print('query', len(self.keypoints), self.keypoints[0])
-            pt1 = predictions[query_idx]
-            pt2 = self.keypoints[train_idx].pt
+            pt1 = keypoints1[query_idx]
+            pt2 = keypoints2[train_idx]
             dx = pt1[0] - pt2[0]
             dy = pt1[1] - pt2[1]
             if np.sqrt(dx*dx + dy*dy) > self.neighborhood:

@@ -8,7 +8,7 @@ class KeyframeSelect(ABC):
         self.depth_estimator = depth_estimator
         self.slam_structure = slam_structure
         self.localBA = localBA
-        self.keyframe_cooldown = 0
+        self.keyframe_cooldown = 10
         self.new_keyframe_counter = 0
         self.new_keyframes = []
         self.make_keyframe = False
@@ -53,37 +53,36 @@ class KeyframeSelectSubsample(KeyframeSelect):
 class KeyframeSelectFeature(KeyframeSelect):
     def __init__(self, dataset, depth_estimator, slam_structure, localBA) -> None:
         super().__init__(dataset, depth_estimator, slam_structure, localBA)
-        self.cooldown_num = 200
+        self.cooldown_num = 3
         self.similar_threshold = 0.90
         
     def decide_keyframe(self, idx): 
         self.keyframe_cooldown -= 1
         current_frame = self.slam_structure.all_frames[idx]
-        if self.keyframe_cooldown <= 0:
-            # Check if last keyframe was old
+
+        # Compare similarity of tracked points between last keyframe and current frame
+        last_keypoints_ids = self.slam_structure.last_keyframe.feature.keypoints_ids
+        last_point_ids = set()
+        for point_id in last_keypoints_ids: last_point_ids.add(point_id)
+
+        # current_pose_points = self.slam_structure.pose_point_map[idx]
+        current_point_ids = current_frame.feature.keypoints_ids
+        tracked_point_ids = set()
+        for point_id in current_point_ids: tracked_point_ids.add(point_id)
+        
+        #TODO: also check the parallax between the keyframes
+        current_pose = current_frame.pose.matrix()
+        last_pose = self.slam_structure.last_keyframe.pose.matrix()
+        parallax = np.linalg.norm(current_pose[:3, 3] - last_pose[:3, 3])
+        # print('parallax:', parallax)
+        if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold\
+            and self.keyframe_cooldown <= 0:
+            # print(self.keyframe_cooldown)
             self.make_keyframe = True
-        else:
-            # Compare similarity of tracked points between last keyframe and current frame
-            last_keypoints_ids = self.slam_structure.last_keyframe.feature.keypoints_ids
-            last_point_ids = set()
-            for point_id in last_keypoints_ids: last_point_ids.add(point_id)
-
-            # current_pose_points = self.slam_structure.pose_point_map[idx]
-            current_point_ids = current_frame.feature.keypoints_ids
-            tracked_point_ids = set()
-            for point_id in current_point_ids: tracked_point_ids.add(point_id)
             
-            #TODO: also check the parallax between the keyframes
-            current_pose = current_frame.pose.matrix()
-            last_pose = self.slam_structure.last_keyframe.pose.matrix()
-            parallax = np.linalg.norm(current_pose[:3, 3] - last_pose[:3, 3])
-            # print('parallax:', parallax)
-            if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold:
-                self.make_keyframe = True
-
         if self.make_keyframe:
             self.keyframe_cooldown = self.cooldown_num
-    
+            
     # def decide_keyframe(self, idx):
     #     self.keyframe_cooldown -= 1
     #     if idx == 1:

@@ -4,78 +4,79 @@ import time
 import cv2
 import logging
 from DBoW.R2D2 import R2D2
+from optimizers import BundleAdjuster
 from misc.components import Frame, MapPoint, Camera
 r2d2 = R2D2()
 logger = logging.getLogger('logfile.txt')
 
 # TODO: Rename this to point tracking for more clarity.
 
-# Helper functions (TODO: Relocate to misc.?)
-def apply_transformation(T, point_cloud):
-    try:
-        for i in range(len(point_cloud)):
-                point_cloud[i] = T @ point_cloud[i]
+# # Helper functions (TODO: Relocate to misc.?)
+# def apply_transformation(T, point_cloud):
+#     try:
+#         for i in range(len(point_cloud)):
+#                 point_cloud[i] = T @ point_cloud[i]
             
-        return point_cloud
-    except:
-        breakpoint()
+#         return point_cloud
+#     except:
+#         breakpoint()
 
-def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
-    # Unproject n 2d points
-    # points: n x 2
-    # depth_image: H x W
-    # cam_pose: 4 x 4 
+# def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
+#     # Unproject n 2d points
+#     # points: n x 2
+#     # depth_image: H x W
+#     # cam_pose: 4 x 4 
 
-    x_d, y_d = points_2d[:, 0], points_2d[:, 1]
-    fx, fy, cx, cy = intrinsics[0], intrinsics[1], intrinsics[2], intrinsics[3]
+#     x_d, y_d = points_2d[:, 0], points_2d[:, 1]
+#     fx, fy, cx, cy = intrinsics[0], intrinsics[1], intrinsics[2], intrinsics[3]
 
-    depths = depth_image[y_d.astype(int), x_d.astype(int)]
-    x = ((x_d - cx) * depths / fx)[:, None]
-    y = ((y_d - cy) * depths / fy)[:, None]
-    z = depths[:, None]
+#     depths = depth_image[y_d.astype(int), x_d.astype(int)]
+#     x = ((x_d - cx) * depths / fx)[:, None]
+#     y = ((y_d - cy) * depths / fy)[:, None]
+#     z = depths[:, None]
 
-    points_3d = np.stack([x, y, z, np.ones_like(x)],  axis=-1).squeeze(axis=1)
+#     points_3d = np.stack([x, y, z, np.ones_like(x)],  axis=-1).squeeze(axis=1)
 
-    points_3d = apply_transformation(cam_to_world_pose, points_3d)
+#     points_3d = apply_transformation(cam_to_world_pose, points_3d)
 
-    return points_3d
+#     return points_3d
 
-def triangulatePoints(self, pose_0, next_pose, new_points_0, new_points_1):
-        """Triangulates the feature correspondence points with
-        the camera intrinsic matrix, rotation matrix, and translation vector.
-        It creates projection matrices for the triangulation process."""
-        # pose of the next frame
-        R = next_pose[:3 ,:3]
-        t = next_pose[:3 , 3].reshape(3,1)
-        # The canonical matrix (set as the origin)
-        P0 = np.array([[1, 0, 0, 0],
-                       [0, 1, 0, 0],
-                       [0, 0, 1, 0]])
-        P0 = self.K.dot(P0)
-        # Rotated and translated using P0 as the reference point
-        P1 = np.hstack((R, t))
-        P1 = self.K.dot(P1)
-        new_points_0 = cv2.undistortPoints(new_points_0.astype(np.float64), self.K, None)
-        new_points_1 = cv2.undistortPoints(new_points_1.astype(np.float64), self.K, None)
-        # for i in range(curr_points.shape[1]):
-        #     point_3d_homogeneous = cv2.triangulatePoints(P0, P1, curr_points, next_points)
-        #     point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
-        #     print(point_3d.shape())
-        #     # print(i, point_3d_homogeneous.reshape(-1,4))
-        #     # Minimal motion
-        #     if point_3d_homogeneous[3,:] == 0:
-        #         return None
-        #     else:
-        #         point_3d_homogeneous = point_3d_homogeneous/point_3d_homogeneous[3,:]
-        #         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
-        #         point3d.append(point_3d_homogeneous.reshape(-1,4)[:,:3])
+# def triangulatePoints(self, pose_0, next_pose, new_points_0, new_points_1):
+#         """Triangulates the feature correspondence points with
+#         the camera intrinsic matrix, rotation matrix, and translation vector.
+#         It creates projection matrices for the triangulation process."""
+#         # pose of the next frame
+#         R = next_pose[:3 ,:3]
+#         t = next_pose[:3 , 3].reshape(3,1)
+#         # The canonical matrix (set as the origin)
+#         P0 = np.array([[1, 0, 0, 0],
+#                        [0, 1, 0, 0],
+#                        [0, 0, 1, 0]])
+#         P0 = self.K.dot(P0)
+#         # Rotated and translated using P0 as the reference point
+#         P1 = np.hstack((R, t))
+#         P1 = self.K.dot(P1)
+#         new_points_0 = cv2.undistortPoints(new_points_0.astype(np.float64), self.K, None)
+#         new_points_1 = cv2.undistortPoints(new_points_1.astype(np.float64), self.K, None)
+#         # for i in range(curr_points.shape[1]):
+#         #     point_3d_homogeneous = cv2.triangulatePoints(P0, P1, curr_points, next_points)
+#         #     point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
+#         #     print(point_3d.shape())
+#         #     # print(i, point_3d_homogeneous.reshape(-1,4))
+#         #     # Minimal motion
+#         #     if point_3d_homogeneous[3,:] == 0:
+#         #         return None
+#         #     else:
+#         #         point_3d_homogeneous = point_3d_homogeneous/point_3d_homogeneous[3,:]
+#         #         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
+#         #         point3d.append(point_3d_homogeneous.reshape(-1,4)[:,:3])
                 
-        point_3d_homogeneous = cv2.triangulatePoints(P0, P1, new_points_0, new_points_1)
-        point_3d_homogeneous = pose_0 @ point_3d_homogeneous
-        point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
-        point_3d = point_3d.reshape((point_3d.shape[0], 3))
-        # print('ppppppppppp',point_3d, t)
-        return point_3d
+#         point_3d_homogeneous = cv2.triangulatePoints(P0, P1, new_points_0, new_points_1)
+#         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
+#         point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
+#         point_3d = point_3d.reshape((point_3d.shape[0], 3))
+#         # print('ppppppppppp',point_3d, t)
+#         return point_3d
 
 class Tracking:
     def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA, dataset) -> None:
@@ -85,9 +86,24 @@ class Tracking:
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
         self.localBA = BA
+        self.optimizer = BundleAdjuster()
         self.dataset = dataset
         self.new_point_ids = []
+    
+    def refine_pose(self, pose, intrinsics, measurements):
+        assert len(measurements) >= self.min_measurements, (
+            'Not enough points')
             
+        self.optimizer.clear()
+        self.optimizer.add_pose(0, pose, intrinsics, fixed=False)
+
+        for i, m in enumerate(measurements):
+            self.optimizer.add_point(i, m.mappoint.position, fixed=True)
+            self.optimizer.add_edge(0, i, 0, m)
+
+        self.optimizer.optimize(self.max_iterations)
+        return self.optimizer.get_pose(0)
+    
     # Point tracking done
     def process_section(self, section_indices, dataset, slam_structure, 
                     sample_new_points=True, 
@@ -111,14 +127,18 @@ class Tracking:
 
         # Point resampling process
         if sample_new_points:
-
+            
             depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
             # self.depth_estimator.visualize()
                 
             frame = slam_structure.all_frames[section_indices[start_frame]]
             
+            # local_mappoints = slam_structure.filter_points(frame)
+            # measurements = frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
+            
             # Resample points
             kept_pose_points, new_points_2d, points_descriptor = self.point_resampler(frame, init)
+            # print(len(new_points_2d))
             if new_points_2d is not None:
                 # Unproject new 2d samples
                 new_points_3d = frame.unproject(new_points_2d, depth_0)

@@ -152,7 +152,7 @@ class Frame(object):
                 [self.get_descriptor(j)])
             measurements.append((i, meas))
             self.set_matched(j)
-        return matches
+        return measurements
     
     def get_keypoint(self, i):
         return self.feature.get_keypoint(i)
@@ -166,6 +166,9 @@ class Frame(object):
         return self.feature.get_unmatched_keypoints()
     
     def match_mappoints(self, mappoints, source):
+        '''
+        Match a local mappoints to the current frame's feature points.
+        '''
         points = []
         descriptors = []
         for mappoint in mappoints:
@@ -299,7 +302,7 @@ class Measurement(GraphMeasurement):
         self.descriptors = descriptors
         self.view = None    # mappoint's position in current coordinates frame
 
-        self.xy = np.array(self.keypoints[0].pt)
+        self.xy = np.array(self.keypoints[0])
         # if self.is_stereo():
         #     self.xyx = np.array([
         #         *keypoints[0].pt, keypoints[1].pt[0]])

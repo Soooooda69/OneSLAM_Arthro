@@ -184,6 +184,9 @@ class CovisibilityGraph(object):
                 raise TypeError
 
     def get_reference_frame(self, seedpoints):
+        '''
+        Find out the keyframe that has the most covisible mappoints with the seedpoints
+        '''
         assert len(seedpoints) > 0
         visible = [pt.keyframes() for pt in seedpoints]
         visible = Counter(chain(*visible))
