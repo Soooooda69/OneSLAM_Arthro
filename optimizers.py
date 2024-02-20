@@ -130,7 +130,74 @@ class BundleAdjuster(g2o.SparseOptimizer):
     def fix_point(self, point_id, fixed=True):
         self.vertex(point_id * 2 + 1).set_fixed(fixed)
 
+class LocalBA_cg(object):
+    def __init__(self, ):
+        self.optimizer = BundleAdjuster()
+        self.measurements = []
+        self.keyframes = []
+        self.mappoints = set()
+        self.edge_count = 0
+        
+        # threshold for confidence interval of 95%
+        self.huber_threshold = 5.991
 
+    def set_data(self, adjust_keyframes, fixed_keyframes):
+        self.clear()
+        for kf in adjust_keyframes:
+            self.optimizer.add_pose(kf.idx, kf.pose, kf.intrinsic, fixed=False)
+            self.keyframes.append(kf)
+
+            for m in kf.measurements():
+                pt = m.mappoint
+                if pt not in self.mappoints:
+                    self.optimizer.add_point(pt.idx, pt.position)
+                    self.mappoints.add(pt)
+
+                edge_id = len(self.measurements)
+                self.optimizer.add_edge(edge_id, pt.idx, kf.idx, m.xy)
+                self.measurements.append(m)
+                self.edge_count += 1
+
+        for kf in fixed_keyframes:
+            self.optimizer.add_pose(kf.idx, kf.pose, kf.intrinsic, fixed=True)
+            for m in kf.measurements():
+                if m.mappoint in self.mappoints:
+                    edge_id = len(self.measurements)
+                    self.optimizer.add_edge(edge_id, m.mappoint.idx, kf.idx, m.xy)
+                    self.measurements.append(m)
+                    self.edge_count += 1
+                    
+    def update_points(self):
+        for mappoint in self.mappoints:
+            mappoint.update_position(self.optimizer.get_point(mappoint.idx))
+
+    def update_poses(self):
+        for keyframe in self.keyframes:
+            keyframe.update_pose(self.optimizer.get_pose(keyframe.idx).matrix())
+
+            keyframe.update_reference()
+            keyframe.update_preceding()
+
+    def get_bad_measurements(self):
+        bad_measurements = []
+        for edge in self.optimizer.active_edges():
+            if edge.chi2() > self.huber_threshold:
+                bad_measurements.append(self.measurements[edge.id()])
+        return bad_measurements
+
+    def clear(self):
+        self.optimizer.clear()
+        self.keyframes.clear()
+        self.mappoints.clear()
+        self.measurements.clear()
+
+    def abort(self):
+        self.optimizer.abort()
+
+    def optimize(self, max_iterations):
+        return self.optimizer.optimize(max_iterations)
+
+    
 class LocalBA:
     def __init__(self, slam_structure, BA_sparse_solver, BA_opt_iters, BA_verbose):
         
@@ -253,17 +320,18 @@ class LocalBA:
     
     def extract_ba_data(self):
         for keyframe in self.slam_sturcture.key_frames.values():
-            keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
-            self.valid_frames.add(keyframe)
+            if keyframe.idx*2 in self.BA.vertices():
+                keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
+                self.valid_frames.add(keyframe)
             
         for mappoint in self.localMap:
-            mappoint.update_position(self.BA.get_point(mappoint.id))
-            self.slam_sturcture.valid_points.add(mappoint.id)
+            mappoint.update_position(self.BA.get_point(mappoint.idx))
+            self.slam_sturcture.valid_points.add(mappoint.idx)
 
     def update_ba_data(self):
         for mappoint in self.slam_sturcture.map_points.values():
             point, point_color = mappoint.position, mappoint.color
-            self.BA.set_point(mappoint.id, point)
+            self.BA.set_point(mappoint.idx, point)
             
         for keyframe in self.slam_sturcture.key_frames.values():
             pose, intrinsics = keyframe.pose, keyframe.intrinsic
@@ -389,8 +457,8 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
             #     mappoint.update_position(new)
             #     # mappoint.set_color(color)
             for mappoint in self.slam_structure.map_points.values():
-                if mappoint.id not in self.visitedIDs:
-                    self.visitedIDs.add(mappoint.id)
+                if x not in self.visitedIDs:
+                    self.visitedIDs.add(mappoint.idx)
                     point_3d = mappoint.position
                     old = np.vstack([point_3d[:,None], np.array([1])])
                     new = corrected.matrix() @ (np.linalg.inv(uncorrected.matrix()) @ old)

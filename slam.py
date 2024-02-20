@@ -44,6 +44,8 @@ class SLAM:
         self.PGO = PoseGraphOptimization(self.slam_structure)
                 
         # Load tracking module and associated components
+        # Pose motion model
+        self.motion_model = MotionModel()
         # Pose guesser component
         self.pose_guesser =  PoseGuesserLastPose()
         # Depth estimation component
@@ -62,7 +64,7 @@ class SLAM:
         # self.keyframe_module = KeyframeSelectSubsample(self.dataset, self.depth_estimator, self.slam_structure, self.localBA, args.keyframe_subsample)
         self.keyframe_module = KeyframeSelectFeature(self.dataset, self.depth_estimator, self.slam_structure, self.localBA)
         # Mapping module
-        self.mapping_module = mapping(self.slam_structure, self.localBA, args.local_ba_size)
+        self.mapping_module = mapping(self.slam_structure, self.localBA, self.graph, args.local_ba_size)
         # Current section and keyframes 
         self.current_section = []
         # store loops
@@ -82,6 +84,8 @@ class SLAM:
         
         self.is_initialized = False
         self.need_sample = False
+        # self.tracking_is_ok = []
+        self.tracking_is_ok = True
         
     def initialize(self):
         print('Initializing map ...')
@@ -96,7 +100,7 @@ class SLAM:
             # update correspondences for each frame to slam_structure
             self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
                                             start_frame=0,
-                                            maximum_track_num=args.tracked_point_num_max, init=400)
+                                            maximum_track_num=args.tracked_point_num_max)
             
             # Force 1st frame to be keyframe
             if not self.slam_structure.current:
@@ -104,11 +108,12 @@ class SLAM:
                 # Add to keyframes
                 self.keyframe_module.setKeyframe(frames_to_process[0])
                 keyframe_0 = self.slam_structure.key_frames[frames_to_process[0]]
-                self.graph.add_keyframe(keyframe_0)
+                keyframe_0.set_fixed(True)
+                
                 self.slam_structure.current = keyframe_0
                 self.slam_structure.reference = keyframe_0
                 self.slam_structure.preceding = keyframe_0
-
+                
             # Decide keyframes    
             for idx in self.current_section:
                 # Keyframe decision, adding BA pose-point edges
@@ -117,13 +122,21 @@ class SLAM:
             # The number of keyframes to initialize the map is IMPORTANT!
             init_num = 2
             if self.keyframe_module.new_keyframe_counter >= init_num and len(self.slam_structure.key_frames)!=1:
-                logger.info(f'Initialize keyframes:{self.keyframe_module.new_keyframes}')
+                logger.info(f'Initialize keyframes:{self.keyframe_module.new_keyframes[:2]}')
                 self.mapping_module.full_BA()
                 
-                # Update covisibility graph
+                # Update covisibility graph & motion model
                 for keyframe_idx in self.keyframe_module.new_keyframes:
                     keyframe = self.slam_structure.key_frames[keyframe_idx]
+                    self.graph.add_keyframe(keyframe)
+                    keyframe.update_reference(self.slam_structure.reference)
+                    keyframe.update_preceding(self.slam_structure.preceding)
+                    
+                    frame = self.slam_structure.all_frames[keyframe_idx]
+                    frame.update_pose(keyframe.pose.matrix())
                     self.slam_structure.create_points(keyframe)
+                    self.motion_model.update_pose(frame.timestamp, frame.pose.position(), frame.pose.orientation())
+                    
                 # Reset new keyframe counter
                 self.keyframe_module.resetNewKeyframeCounter()
                 
@@ -226,61 +239,16 @@ class SLAM:
                 # # update current frame
                 # self.slam_structure.current = current_frame
                 
-                if len(current_frame.feature.keypoints) < 0.8 * self.args.localization_track_num:
-                    # This allows to sample more points(start mapping) when the points lost are too many
-                    self.need_sample = True
+                # if len(current_frame.feature.keypoints) < 0.6 * self.args.localization_track_num:
+                #     # This allows to sample more points(start mapping) when the points lost are too many
+                #     self.need_sample = True
+                    
                 # Localize frame with PnP
                 # localized_pose = self.slam_structure.localize_frame(current_frame, 
                 #                                                 update_pose=False,
                 #                                                 ransac=self.args.ransac_localization)
                 # print(f"Localized frame {current_frame.idx} with {localized_pose[:3,3]}")
                 self.slam_structure.lc_frames = {}
-            
-                # for frame_idx in self.current_section.copy():
-                current_frame = self.slam_structure.all_frames[frame_idx]
-                self.slam_structure.current = current_frame
-                # find out local map for current frame
-                local_mappoints = self.slam_structure.filter_points(current_frame)
-                # measurements of current frame matched to local map
-                measurements = current_frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
-                # print('current:',current_frame.idx, 'measurements:', len(measurements), \
-                #     'local map:', len(local_mappoints), 'whole map:', len(self.slam_structure.map_points))
-                
-                tracked_map = set()
-                for m in measurements:
-                    mappoint = m.mappoint
-                    mappoint.update_descriptor(m.get_descriptor())
-                    mappoint.increase_measurement_count()
-                    tracked_map.add(mappoint)
-                
-                try:
-                    # find reference frame which has the most covisible mappoints with tracked map
-                    self.slam_structure.reference = self.graph.get_reference_frame(tracked_map)
-                    # print('reference:', self.slam_structure.reference.idx)
-                    pose = self.tracking_module.refine_pose(current_frame.pose, current_frame.intrinsic, measurements)
-                    print(f'refined pose:{current_frame.idx}', pose[:3,3])
-                    current_frame.update_pose(pose)
-                    tracking_is_ok = True
-                except:
-                    tracking_is_ok = False
-                    print('tracking failed!!!')
-                
-                # breakpoint()
-                # if tracking_is_ok and current_frame.idx in self.keyframe_module.new_keyframes:
-                #     keyframe = self.slam_structure.key_frames[current_frame.idx]
-                #     print('uuuuuuuuuupdate cg for keyframe', keyframe.idx)
-                #     keyframe.update_reference(self.slam_structure.reference)
-                #     keyframe.update_preceding(self.slam_structure.preceding)
-
-                #     #Update covisibility graph
-                #     for keyframe_idx in self.keyframe_module.new_keyframes:
-                #         keyframe = self.slam_structure.key_frames[keyframe_idx]
-                #         self.graph.add_keyframe(keyframe)
-                #         self.slam_structure.create_points(keyframe)
-                #     # if self.loop_closing is not None:
-                #     #     self.loop_closing.add_keyframe(keyframe)
-                #     self.slam_structure.preceding = keyframe
-            
             
             # Tracking done and new update available
             current_time = time.time()
@@ -298,110 +266,70 @@ class SLAM:
                 if self.mapping_counter > 0: print("Running Mapping FPS: ", self.mapping_counter/self.total_mapping_time)
                 
             self.update_start_time = time.time()
-            
-    # def mapping(self):
-    #     # print("Tracking ...")
-    #     mapping_start_time = time.time()
-    #     # Section full, start MAPing
-    #     # Remove all existing correspondences (likely to be faulty), except for frist frame
-    #     # self.mapping_module.remove_correspondences(self.current_section)
-
-    #     # Obtain new consistent set of point correspondences
-    #     # Track the points throughout the section, keep only covisible points
-    #     section_to_track = self.current_section.copy()
-    #     print('section_to_map:', section_to_track)
-    #     # update correspondences for each frame to slam_structure
-    #     self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
-    #                                     start_frame=0,
-    #                                     maximum_track_num=args.tracked_point_num_max)
-    #     # Decide to make frames into new keyframes
-    #     for idx in self.current_section:
-    #         # Keyframe decision, adding BA pose-point edges
-    #         self.keyframe_module.run(idx)
-    #         # self.loop_closure(idx)
+    
+    def tracking(self):
+        section_to_track = self.current_section.copy()
+        print('section_to_map:', section_to_track)
+        # update correspondences for each frame to slam_structure
+        self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
+                                        start_frame=0,
+                                        maximum_track_num=args.tracked_point_num_max)
         
-    #     # TODO: Add loop closure here
-    #     # Add detected loop frame to keyframes
-    #     # if len(self.loops) > self.num_loops and self.loop_close_module.loop_coolDown <= 0:
-    #     #     self.num_loops = len(self.loops)
-            
-    #     #     if self.loops[-1][1] not in self.slam_structure.key_frames.keys():
-    #     #         self.keyframe_module.setKeyframe(self.loops[-1][1])
-    #     #         # sort keyframes
-    #     #         self.slam_structure.key_frames = dict(sorted(self.slam_structure.key_frames.items()))
-    #     #         logger.info(f'Add loop frame: {self.loops[-1][1]}.')       
-                                
-    #     #     slam.loop_closing()
-    #     #     self.loop_close_module.loop_coolDown = 100
-    #     #     # avoid the next local BA
-    #     #     self.keyframe_module.new_keyframe_counter = 0
+        # Decide to make frames into new keyframes
+        for idx in self.current_section:
+            # Keyframe decision, adding BA pose-point edges
+            self.keyframe_module.run(idx)
         
-    #     # logger.info(f'Current section: {section_to_track}, Last Keyframe: {self.slam_structure.last_keyframe.idx}')
+        for frame_idx in self.current_section.copy()[1:]:
+            current_frame = self.slam_structure.all_frames[frame_idx]
+            predicted_pose, _ = self.motion_model.predict_pose(current_frame.timestamp)
+            current_frame.update_pose(predicted_pose)
+            self.slam_structure.current = current_frame
+            # find out local map for current frame
+            local_match_time_s = time.time()
+            local_mappoints = self.slam_structure.filter_points(current_frame)
+            # measurements of current frame matched to local map
+            measurements = current_frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
 
-    #         # # Update covisibility graph
-    #         # for keyframe_idx in self.keyframe_module.new_keyframes:
-    #         #     keyframe = self.slam_structure.key_frames[keyframe_idx]
-    #         #     self.slam_structure.create_points(keyframe)
-            
-    #     for frame_idx in section_to_track:
-    #         current_frame = self.slam_structure.all_frames[frame_idx]
-    #         self.slam_structure.current = current_frame
-    #         #TODO: find out local map for current frame
-    #         local_mappoints = self.slam_structure.filter_points(current_frame)
-    #         measurements = current_frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
-    #         print('measurements:', len(measurements), 'local map:', len(local_mappoints), 'whole map:', len(self.slam_structure.map_points))
-            
-    #         tracked_map = set()
-    #         for m in measurements:
-    #             mappoint = m.mappoint
-    #             mappoint.update_descriptor(m.get_descriptor())
-    #             mappoint.increase_measurement_count()
-    #             tracked_map.add(mappoint)
-            
-    #         try:
-    #             # print('tracked_map:', len(tracked_map))
-    #             self.slam_structure.reference = self.graph.get_reference_frame(tracked_map)
-    #             # print('reference:', self.slam_structure.reference.idx)
-    #             pose = self.tracking_module.refine_pose(current_frame.pose, current_frame.intrinsic, measurements)
-    #             # print('refined pose:', pose[:3,3])
-    #             current_frame.update_pose(pose)
-    #             tracking_is_ok = True
-    #         except:
-    #             tracking_is_ok = False
-    #             print('tracking failed!!!')
-            
-    #         # breakpoint()
-    #         if tracking_is_ok and current_frame.idx in self.keyframe_module.new_keyframes:
-    #             keyframe = self.slam_structure.key_frames[current_frame.idx]
-    #             print('uuuuuuuuuupdate cg for keyframe', keyframe.idx)
-    #             keyframe.update_reference(self.slam_structure.reference)
-    #             keyframe.update_preceding(self.slam_structure.preceding)
+            # print('current:',current_frame.idx, 'measurements:', len(measurements), \
+            #     'local map:', len(local_mappoints), 'whole map:', len(self.slam_structure.map_points))
+            tracked_map = set()
+            for m in measurements:
+                mappoint = m.mappoint
+                mappoint.update_descriptor(m.get_descriptor())
+                mappoint.increase_measurement_count()
+                tracked_map.add(mappoint)
+            local_match_time = time.time() - local_match_time_s
+            print('local match time:',local_match_time)
+            try:
+                # find reference frame which has the most covisible mappoints with tracked map
+                self.slam_structure.reference = self.graph.get_reference_frame(tracked_map)
+                # print('reference:', self.slam_structure.reference.idx)
+                pose = self.tracking_module.refine_pose(current_frame.pose, current_frame.intrinsic, measurements)
+                # print(f'refined pose:{current_frame.idx}', pose.matrix()[:3,3])
+                current_frame.update_pose(pose.matrix())
+                self.motion_model.update_pose(
+                current_frame.timestamp, pose.position(), pose.orientation())
+                # self.tracking_is_ok.append(current_frame.idx)
+                self.tracking_is_ok = True
+            except:
+                self.tracking_is_ok = False
+                print('tracking failed!!!')
 
-    #             #Update covisibility graph
-    #             for keyframe_idx in self.keyframe_module.new_keyframes:
-    #                 keyframe = self.slam_structure.key_frames[keyframe_idx]
-    #                 self.graph.add_keyframe(keyframe)
-    #                 self.slam_structure.create_points(keyframe)
-    #             # if self.loop_closing is not None:
-    #             #     self.loop_closing.add_keyframe(keyframe)
-    #             self.slam_structure.preceding = keyframe
-            
-    #     # If there are new keyframes, run local BA
-    #     if self.keyframe_module.new_keyframe_counter > 0:
-    #         self.mapping_module.local_BA(args.local_ba_size, args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
-
-            
-    #         # Reset new keyframe counter
-    #         self.keyframe_module.resetNewKeyframeCounter()
-            
-    #     # Mapping done
-    #     current_time = time.time()
-    #     self.mapping_counter += 1
-    #     self.total_mapping_time += current_time - mapping_start_time
-             
-    #     # Update section
-    #     self.current_section = self.current_section[-1:]
-    #     self.completed_sections += 1
+            if self.tracking_is_ok and current_frame.idx in self.keyframe_module.new_keyframes:
+                keyframe = self.slam_structure.key_frames[current_frame.idx]
+                keyframe.update_reference(self.slam_structure.reference)
+                keyframe.update_preceding(self.slam_structure.preceding)
+                #Update covisibility graph
+                self.mapping_module.add_keyframe(keyframe, measurements)
+                # if self.loop_closing is not None:
+                #     self.loop_closing.add_keyframe(keyframe)
+                self.slam_structure.preceding = keyframe
+        self.keyframe_module.resetNewKeyframeCounter()
+        # Update section
+        self.current_section = self.current_section[-1:]
+        self.completed_sections += 1
+        
     def mapping(self):
         # print("Tracking ...")
         mapping_start_time = time.time()
@@ -416,7 +344,7 @@ class SLAM:
             # Keyframe decision, adding BA pose-point edges
             self.keyframe_module.run(idx)
             # self.loop_closure(idx)
-            
+        
         # If there are new keyframes, run local BA
         if self.keyframe_module.new_keyframe_counter > 0:
             self.mapping_module.local_BA(args.tracking_ba_iterations, self.keyframe_module.new_keyframe_counter)
@@ -492,7 +420,7 @@ class SLAM:
         # for point_id in self.slam_structure.points.keys():
         # for point in mappoints_dict.items():
         for mappoint in self.slam_structure.map_points.values():
-            self.localBA.BA.add_point(mappoint.id, mappoint.position, fixed=False, marginalized=True)
+            self.localBA.BA.add_point(mappoint.idx, mappoint.position, fixed=False, marginalized=True)
             
         for keyframe in self.slam_structure.key_frames.values():
             self.localBA.set_frame_data(keyframe.idx, False)
@@ -574,7 +502,6 @@ if __name__ == "__main__":
                                             MaskOutLuminosity(threshold_high=args.lumen_mask_high_threshold, threshold_low=args.lumen_mask_low_threshold),
                                             SampleToDevice(args.target_device)])
     dataset = ImageDataset(args.data_root, transform=composed_transforms)
-
     # Determine frames to process
     frames_to_process = list(dataset.images.keys())
     if args.process_subset:
@@ -639,6 +566,7 @@ for frame_idx in tqdm(frames_to_process):
     #                                                   Mapping                                               #
     ###########################################################################################################
     slam.mapping()
+    # slam.tracking()
     # # Loop closing
     # if len(slam.loops) > slam.num_loops:
     #     slam.num_loops = len(slam.loops)
@@ -653,8 +581,13 @@ for frame_idx in tqdm(frames_to_process):
     #     # update BA with poses and points after PGO
     #     slam.localBA.update_ba_data()
     
-    if len(slam.slam_structure.key_frames) > 20:
+    if len(slam.slam_structure.all_frames) > 350:
         break
+    if len(slam.slam_structure.key_frames) % 10 == 0:
+        slam.slam_structure.save_nerfStyle_data()
+        slam.slam_structure.write_tum_poses(slam.slam_structure.exp_root / "poses_pred.txt")
+        slam.slam_structure.write_full_tum_poses(slam.slam_structure.exp_root / "f_poses_pred.txt")
+        
 # for idx in slam.slam_structure.keyframes:
 #     slam.localBA.BA.fix_pose(idx, fixed=False)
 # slam.localBA.BA.fix_pose(slam.slam_structure.keyframes[0], fixed=True)

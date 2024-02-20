@@ -59,7 +59,8 @@ def plot_and_save_trajectory(
     o3d.io.write_triangle_mesh(save_name, trajectory)
 
 def plot_points(filepath, slam_structure):
-    # Count number of point occurances to avoid untriangulated points
+    # Count number of point occurrences to avoid untriangulated points
+    scale = 10
     counts = dict()
     for keyframe in slam_structure.key_frames.values():
         for point_id in keyframe.feature.keypoints_ids:
@@ -69,8 +70,9 @@ def plot_points(filepath, slam_structure):
 
     point_cloud = []
     point_colors = []
+    point_normals = []
     for mappoint in slam_structure.map_points.values():
-        point_id = mappoint.id
+        point_id = mappoint.idx
         # if point_id not in counts or counts[point_id] <= 3:
         #     continue
         point_3d, point_color = mappoint.position, mappoint.color
@@ -78,11 +80,30 @@ def plot_points(filepath, slam_structure):
         point_colors.append(point_color)
 
     point_cloud = np.array(point_cloud)
-    point_colors = (255*np.array(point_colors)).astype(np.uint8)
-    point_cloud = pd.DataFrame({ 'x': point_cloud[:, 0], 'y': point_cloud[:, 1], 'z': point_cloud[:, 2],'red': point_colors[:, 0], 'green': point_colors[:, 1], 'blue': point_colors[:, 2]})
-    pynt_cloud = PyntCloud(point_cloud)
-    pynt_cloud.to_file(str(filepath))
+    point_colors = (255 * np.array(point_colors)).astype(np.uint8)
+    point_normals = np.zeros_like(point_cloud)
 
+    # Normalize the point cloud
+    point_cloud_mean = np.mean(point_cloud, axis=0)
+    point_cloud_std = np.std(point_cloud, axis=0)
+    point_cloud_normalized = ((point_cloud - point_cloud_mean) / point_cloud_std) * scale
+
+    point_cloud_normalized = pd.DataFrame({
+        'x': point_cloud_normalized[:, 0],
+        'y': point_cloud_normalized[:, 1],
+        'z': point_cloud_normalized[:, 2],
+        'red': point_colors[:, 0],
+        'green': point_colors[:, 1],
+        'blue': point_colors[:, 2],
+        'nx': point_normals[:, 0],
+        'ny': point_normals[:, 1],
+        'nz': point_normals[:, 2]
+    })
+
+    pynt_cloud = PyntCloud(point_cloud_normalized)
+    pynt_cloud.to_file(str(filepath))
+    return point_cloud_mean, point_cloud_std, scale
+    
 def visualize_point_correspondences(path, slam_structure, subsample_factor = 1):
     def get_color(id):
         import colorsys

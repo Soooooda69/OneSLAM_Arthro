@@ -101,14 +101,13 @@ class Tracking:
             self.optimizer.add_point(i, m.mappoint.position, fixed=True)
             self.optimizer.add_edge(0, i, 0, m.xy)
         self.optimizer.optimize(10)
-        return self.optimizer.get_pose(0).matrix()
+        return self.optimizer.get_pose(0)
     
     # Point tracking done
     def process_section(self, section_indices, dataset, slam_structure, 
                     sample_new_points=True, 
                     start_frame=0, 
-                    maximum_track_num = None,
-                    init = False):        
+                    maximum_track_num = None):        
         # NOTE: This now only does the point tracking and does not add new keyframes or aquires new initial pose estimates 
         #       requires first frame to be present in poses
         # assert section_indices[start_frame] in slam_structure.visited_frames.keys()
@@ -126,7 +125,6 @@ class Tracking:
 
         # Point resampling process
         if sample_new_points:
-            
             depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
             # self.depth_estimator.visualize()
                 
@@ -136,9 +134,10 @@ class Tracking:
             # measurements = frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
             
             # Resample points
-            kept_pose_points, new_points_2d, points_descriptor = self.point_resampler(frame, init)
+            kept_pose_points, new_points_2d, points_descriptor = self.point_resampler(frame)
             # print(len(new_points_2d))
             if new_points_2d is not None:
+                print('new points sampled:', len(new_points_2d))
                 # Unproject new 2d samples
                 new_points_3d = frame.unproject(new_points_2d, depth_0)
                 # Add new points and correspondences to datastructure 
@@ -153,16 +152,16 @@ class Tracking:
                     mapPoint = slam_structure.add_mappoint(point_3d, point_color, point_descriptor)
                     
                     # self.localBA.BA.add_point(mapPoint.id, point_3d)
-                    self.new_point_ids.append(mapPoint.id)
+                    self.new_point_ids.append(mapPoint.idx)
                     
                     # update frame
-                    frame.feature.keypoints_info[mapPoint.id] = (point_2d, point_descriptor)
+                    frame.feature.keypoints_info[mapPoint.idx] = (point_2d, point_descriptor)
                     frame.feature.update_keypoints_info()
             else:
                 # If no new points were sampled, add old points to current frame correspondences
                 print('no points sampled!')
-                frame.feature.keypoints_info = slam_structure.all_frames[section_indices[start_frame]-1].feature.keypoints_info
-                frame.feature.update_keypoints_info()
+                # frame.feature.keypoints_info = slam_structure.all_frames[section_indices[start_frame]].feature.keypoints_info
+                # frame.feature.update_keypoints_info()
                 
         # Obtain currently tracked points on first frame
         # pose_points = slam_structure.get_pose_points(section_indices[start_frame])
@@ -255,7 +254,8 @@ class Tracking:
                 tracked_point = pred_tracks[0, local_idx, i].detach().cpu().numpy()
 
                 # Point outside of image boundary goes out of focus
-                if tracked_point[0] < 0 or tracked_point[1] < 0 or tracked_point[0] >= W or tracked_point[1] >= H:
+                if tracked_point[0] < 0 or tracked_point[1] < 0 \
+                    or tracked_point[0] >= W or tracked_point[1] >= H:
                     pred_visibility[0, local_idx, i] = False
                     continue
                 
@@ -265,8 +265,8 @@ class Tracking:
                     continue
                 
                 # Check if point has never gone out of focus
-                visible = pred_visibility[0, :local_idx+1, i]
-                # visible = pred_visibility[0, :len(section_indices), i]
+                # visible = pred_visibility[0, :local_idx+1, i]
+                visible = pred_visibility[0, :len(section_indices), i]
                 if not torch.all(visible):
                     continue
                 

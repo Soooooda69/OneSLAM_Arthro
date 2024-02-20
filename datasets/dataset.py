@@ -18,7 +18,7 @@ class ImageDataset(Dataset):
         self.images = self.acquire_images()
         self.cam_calibration = self.acquire_cam_calibration()
         self.mask = self.acquire_mask()
-
+        self.timestamps = self.acquire_timestamps()
         # Optional ground truth
         self.depths, self.depths_available = self.acquire_depths()
         self.poses, self.poses_available = self.acquire_poses()
@@ -33,6 +33,20 @@ class ImageDataset(Dataset):
 
         self.transform = transform
 
+    def acquire_timestamps(self):
+        time_path = self.data_root / "timestamp.txt"
+        #breakpoint()
+        assert time_path.exists()
+        assert time_path.is_file()
+
+        timestamp_dict = dict()
+        
+        with open(time_path) as file:
+            for frame_idx, line in enumerate(file):
+                timestamp = line
+                timestamp_dict[int(frame_idx)] = float(timestamp)/1e9
+        return timestamp_dict
+    
     def acquire_images(self):
         image_path = self.data_root / "images"
         #breakpoint()
@@ -40,11 +54,9 @@ class ImageDataset(Dataset):
         assert image_path.is_dir()
 
         image_path_list = sorted(list(image_path.glob('*.jpg')) + list(image_path.glob('*.png')))
-
         image_dict = dict()
         for path in image_path_list:
             image_dict[int(str(path)[-12:-4])] = path
-
         return image_dict
     
     def acquire_cam_calibration(self):
@@ -97,13 +109,12 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, idx):
         assert idx in self.images.keys()
-
         # Load data in numpy format
         image = np.array(Image.open(self.images[idx]))
         depth = np.zeros_like(image)[..., 0][..., None]
         pose = np.identity(4)
         mask = 255*np.ones_like(image)[..., 0][..., None] if self.mask is None else self.mask
-
+        timestamp = self.timestamps[idx]
 
         if self.depths_available and idx in self.depths.keys():
             depth = np.asarray(cv.imread(str(self.depths[idx]), cv.IMREAD_UNCHANGED)).astype(np.float32)[..., None]
@@ -119,11 +130,12 @@ class ImageDataset(Dataset):
 
         sample = {
             'frame_idx': idx,
+            'timestamp': timestamp,
             'image':image,
             'intrinsics':intrinisics_arr,
             'mask':mask,
             'pose':pose,
-            'depth': depth
+            'depth': depth,
         }
 
         if self.transform:

@@ -7,21 +7,21 @@ from itertools import chain
 
 class GraphKeyFrame(object):
     def __init__(self):
-        self.id = None
+        self.idx = None
         self.meas = dict()
         self.covisible = defaultdict(int)
         self._lock = Lock()
 
     def __hash__(self):
-        return self.id
+        return self.idx
 
     def __eq__(self, rhs):
         return (isinstance(rhs, GraphKeyFrame) and 
-            self.id == rhs.id)
+            self.idx == rhs.idx)
     def __lt__(self, rhs):
-        return self.id < rhs.id   # predate
+        return self.idx < rhs.idx   # predate
     def __le__(self, rhs):
-        return self.id <= rhs.id
+        return self.idx <= rhs.idx
 
     def measurements(self):
         with self._lock:
@@ -54,20 +54,20 @@ class GraphKeyFrame(object):
 
 class GraphMapPoint(object):
     def __init__(self):
-        self.id = None
+        self.idx = None
         self.meas = dict()
         self._lock = Lock()
 
     def __hash__(self):
-        return self.id
+        return self.idx
 
     def __eq__(self, rhs):
         return (isinstance(rhs, GraphMapPoint) and 
-            self.id == rhs.id)
+            self.idx == rhs.idx)
     def __lt__(self, rhs):
-        return self.id < rhs.id
+        return self.idx < rhs.idx
     def __le__(self, rhs):
-        return self.id <= rhs.id
+        return self.idx <= rhs.idx
 
     def measurements(self):
         with self._lock:
@@ -94,17 +94,16 @@ class GraphMeasurement(object):
     def __init__(self):
         self.keyframe = None
         self.mappoint = None
-
     @property
-    def id(self):
-        return (self.keyframe.id, self.mappoint.id)
+    def idx(self):
+        return (self.keyframe.idx, self.mappoint.idx)
 
     def __hash__(self):
-        return hash(self.id)
+        return hash(self.idx)
 
     def __eq__(self, rhs):
         return (isinstance(rhs, GraphMeasurement) and
-            self.id == rhs.id)
+            self.idx == rhs.idx)
 
 
 
@@ -141,7 +140,7 @@ class CovisibilityGraph(object):
             try:
                 for m in pt.measurements():
                     m.keyframe.remove_measurement(m)
-                    del self.meas_lookup[m.id]
+                    del self.meas_lookup[m.idx]
                 self.pts.remove(pt)
             except:
                 pass
@@ -150,11 +149,13 @@ class CovisibilityGraph(object):
         with self._lock:
             if kf not in self.kfs_set or pt not in self.pts:
                 return
-
             for m in pt.measurements():
-                if m.keyframe == kf:
+                if m.keyframe.idx == kf.idx:
+                # if m.keyframe == kf:
+                    # print('Measurement already exists')
                     continue
                 kf.add_covisibility_keyframe(m.keyframe)
+                # print('Added covisibility', kf.idx, m.keyframe.idx)
                 m.keyframe.add_covisibility_keyframe(kf)
 
             meas.keyframe = kf
@@ -162,23 +163,23 @@ class CovisibilityGraph(object):
             kf.add_measurement(meas)
             pt.add_measurement(meas)
 
-            self.meas_lookup[meas.id] = meas
+            self.meas_lookup[meas.idx] = meas
 
     def remove_measurement(self, m):
         m.keyframe.remove_measurement(m)
         m.mappoint.remove_measurement(m)
         with self._lock:
             try:
-                del self.meas_lookup[m.id]
+                del self.meas_lookup[m.idx]
             except:
                 pass
 
     def has_measurement(self, *args):
         with self._lock:
             if len(args) == 1:                                 # measurement
-                return args[0].id in self.meas_lookup
+                return args[0].idx in self.meas_lookup
             elif len(args) == 2:                               # keyframe, mappoint
-                id = (args[0].id, args[1].id)
+                id = (args[0].idx, args[1].idx)
                 return id in self.meas_lookup
             else:
                 raise TypeError
@@ -245,5 +246,4 @@ class CovisibilityGraph(object):
             local_map.append(kf.mappoints())
             local_keyframes.append(kf)
         local_map = list(set(chain(*local_map)))
-
         return local_map, local_keyframes

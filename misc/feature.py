@@ -16,7 +16,7 @@ class ImageFeature(object):
         self.mask  = mask
         self.idx = idx
         self.height, self.width = image.shape[:2]
-
+        
         self.keypoints_info = defaultdict() #{keypoints_id: (keypoints, descriptors)}
         self.keypoints_ids = []
         self.keypoints = [] # list of keypoints 2d coordinates
@@ -45,7 +45,7 @@ class ImageFeature(object):
     def extract(self, num_points, update=True):
         # extract features from image
         im_copy = self.image.copy()
-        keypoints, descriptors = r2d2.update_image(im_copy, num_points)
+        keypoints, descriptors = r2d2.update_image(im_copy, 5000)
         if descriptors is None:
             return
         keypoints = keypoints[:,:2].astype(int)
@@ -57,13 +57,16 @@ class ImageFeature(object):
                 continue    
             kps_filtered.append(keypoints[i])
             des_filtered.append(descriptors[i])
+            if len(kps_filtered) == num_points:
+                break
+            
         if update:
             self.keypoints = kps_filtered
             self.descriptors = des_filtered
             # init the keypoints_ids, later will be updated by ids of map points
             self.keypoints_ids = np.ones(len(self.keypoints), dtype=int) * -1
             self.unmatched = np.ones(len(self.keypoints), dtype=bool)
-        # else:
+
         return np.vstack(kps_filtered), np.vstack(des_filtered)
         
     def draw_keypoints(self):

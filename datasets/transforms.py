@@ -11,6 +11,7 @@ class SampleToTensor(object):
 
     def __call__(self, sample):
         return {'frame_idx': sample['frame_idx'],
+                'timestamp': sample['timestamp'],
                 'image': self.np_to_torch_image(sample['image']),
                 'intrinsics': torch.from_numpy(sample['intrinsics']).float(),
                 'mask': self.np_to_torch_image(sample['mask']).float(),
@@ -33,6 +34,7 @@ class MaskOutLuminosity(object):
 
     def __call__(self, sample):
         return {'frame_idx': sample['frame_idx'],
+                'timestamp': sample['timestamp'],
                 'image': sample['image'],
                 'intrinsics': sample['intrinsics'],
                 'mask': self.mask_out_luminosity(sample['image'], sample['mask']),
@@ -48,6 +50,7 @@ class SampleToDevice(object):
 
     def __call__(self, sample):
         return {'frame_idx': sample['frame_idx'],
+                'timestamp': sample['timestamp'],
                 'image': sample['image'].to(self.device),
                 'intrinsics': sample['intrinsics'].to(self.device),
                 'mask': sample['mask'].to(self.device),
@@ -79,6 +82,7 @@ class RescaleImages(object):
         mask_scaled[mask_scaled < 1] = 0
 
         return {'frame_idx': sample['frame_idx'],
+                'timestamp': sample['timestamp'],
                 'image': F.interpolate(sample['image'][None, ...], size=local_target_size, mode='bilinear')[0, ...],
                 'intrinsics': self.adjust_intrinsics(sample['intrinsics'], sample['image'].shape),
                 'mask': mask_scaled,
@@ -114,6 +118,7 @@ class CropImagesToMask(object):
         return intrinsics
     def __call__(self, sample):
         return {'frame_idx': sample['frame_idx'],
+                'timestamp': sample['timestamp'],
                     'image': sample['image'][:,  self.crop_size[1]:self.crop_size[3], self.crop_size[0]:self.crop_size[2]],
                     'intrinsics': self.adjust_intrinsics(sample['intrinsics']),
                     'mask': sample['mask'][:,  self.crop_size[1]:self.crop_size[3], self.crop_size[0]:self.crop_size[2]],

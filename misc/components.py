@@ -28,7 +28,7 @@ class Camera(object):
     
 
 class Frame(object):
-    def __init__(self, idx, pose, mask, image, cam, timestamp=None, 
+    def __init__(self, idx, pose, mask, image, cam, timestamp, 
             pose_covariance=np.identity(6)):
         self.idx = idx
         # g2o.Isometry3d
@@ -41,10 +41,7 @@ class Frame(object):
         self.feature = ImageFeature(image, mask, idx)
         self.cam = cam
         self.intrinsic = [self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy] # [fx, fy, cx, cy]
-        # self.intrinsic_mtx = np.array([
-        #     [intrinsic[0], 0, intrinsic[2]], 
-        #     [0, intrinsic[1], intrinsic[3]], 
-        #     [0, 0, 1]])
+        self.hfov = 2 * np.arctan(self.cam.width / (2 * self.cam.fx))
         self.intrinsic_mtx = self.cam.intrinsic_mtx
         self.timestamp = timestamp
         
@@ -59,6 +56,7 @@ class Frame(object):
         return self.idx
     
     def can_view(self, points, ground=False, margin=20):    # Frustum Culling
+        points = np.vstack([point.position for point in points])
         points = np.transpose(points)
         (u, v), depth = self.project(self.transform(points))
 
@@ -158,7 +156,6 @@ class Frame(object):
         proj = proj.transpose()
         matches = self.feature.find_matches(proj, descriptors)
         matches = dict(matches)
-
         measurements = []
 
         for i, j in matches.items():
@@ -204,7 +201,7 @@ class Frame(object):
         keyframe = KeyFrame(
             self.idx, self.pose, 
             self.feature.mask, self.feature.image,
-            self.cam)
+            self.cam, self.timestamp)
         keyframe.feature = self.feature
         return keyframe
         
@@ -263,7 +260,7 @@ class MapPoint(GraphMapPoint):
         super().__init__()
 
         with MapPoint._id_lock:
-            self.id = MapPoint._id
+            self.idx = MapPoint._id
             MapPoint._id += 1
 
         self.position = position
@@ -325,8 +322,6 @@ class Measurement(GraphMeasurement):
         #     self.xyx = np.array([
         #         *keypoints[0].pt, keypoints[1].pt[0]])
 
-        # self.triangulation = (source == self.Source.TRIANGULATION)
-
     def get_descriptor(self, i=0):
         return self.descriptors[i]
     def get_keypoint(self, i=0):
@@ -337,8 +332,8 @@ class Measurement(GraphMeasurement):
     def get_keypoints(self):
         return self.keypoints
 
-    def from_triangulation(self):
-        return self.triangulation
+    def from_mapping(self):
+        return self.source == Measurement.Source.MAPPING
     def from_tracking(self):
         return self.source == Measurement.Source.TRACKING
     def from_refind(self):

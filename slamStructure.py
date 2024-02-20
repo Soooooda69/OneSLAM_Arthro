@@ -13,11 +13,13 @@ from datasets.dataset import ImageDataset
 from DBoW.R2D2 import R2D2
 r2d2 = R2D2()
 import cv2
+import json
 import logging
 from misc.components import Frame, Camera, KeyFrame, MapPoint, Measurement
 logger = logging.getLogger('logfile.txt')
 
 from visualizations import *
+import numpy as np
 
 def mat_to_vecs(mat):
     trans_vec = mat[:3, 3]
@@ -55,6 +57,7 @@ class SLAMStructure:
         now = datetime.now()
         self.exp_name = now.strftime("exp_%m%d%Y_%H:%M:%S") if name == '' else name
         self.exp_root = Path(output_folder) / self.exp_name
+        self.exp_nerfStyle_root = Path(output_folder) / self.exp_name / 'arthro_data'
         self.graph = graph
     # Registering new frames
 
@@ -63,9 +66,11 @@ class SLAMStructure:
         intrinsic=self.dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
         mask = self.dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
         image = self.dataset[frame_idx]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        timestamp = self.dataset[frame_idx]['timestamp']
         image = image.astype(np.uint8)
         cam = Camera(intrinsic, mask.shape[1], mask.shape[0])
-        frame = Frame(frame_idx, pose, mask, image, cam, timestamp=None)
+        frame = Frame(frame_idx, pose, mask, image, cam, timestamp)
         self.all_frames[frame_idx] = frame
         return frame
     
@@ -96,7 +101,7 @@ class SLAMStructure:
                 [keypoint],
                 [descriptor])
             meas.mappoint = mappoint
-            meas.view = keyframe.transform(mappoint.position)
+            meas.view = keyframe.transform(mappoint.position[...,None])
             measurements.append(meas)
             
         return mappoints, measurements
@@ -114,65 +119,9 @@ class SLAMStructure:
 
     def add_mappoint(self, point_3d, point_color, point_descriptor):
         # Adding a new point
-
-        # # Get id for new point
-        # point_id = len(self.points)
-
-        # # Add point to current map
-        # # Fix first added point in order to preserve scale
-        # self.points[point_id] = (point_3d, point_color)
-        # self.BA.add_point(point_id, point_3d)
-        # point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
         mapPoint = MapPoint(point_3d, point_descriptor, point_color)
-        self.map_points[mapPoint.id] = mapPoint
+        self.map_points[mapPoint.idx] = mapPoint
         return mapPoint
-
-    def add_correspondence(self, frame_idx, point_id, point_2d):
-        # Add a new correspondence
-        
-        # Assert that point and frame are registered
-        assert point_id in self.points.keys()
-        assert frame_idx in self.poses.keys()
-
-        # Check if correspondence has already been added to this frame
-        for i in range(len(self.pose_point_map[frame_idx])):
-            if self.pose_point_map[frame_idx][i][0] == point_id:
-                return
-                # if frame_idx in self.keyframes:
-                #     edge = self.pose_point_edges[frame_idx][i]
-                #     self.BA.update_edge(edge, point_2d)
-                
-                # self.pose_point_map[frame_idx][i] = (point_id, point_2d)
-                # return
-        
-        # Add new correspondence
-        # self.pose_point_map[frame_idx].append((point_id, point_2d, point_descriptor))
-        self.pose_point_map[frame_idx].append((point_id, point_2d))    
-        # If frame_idx is a keyframe, also include corresponce in BA graph
-
-        # if frame_idx in self.keyframes:
-        #     edge = self.BA.add_edge(point_id, frame_idx, point_2d)
-        #     if frame_idx not in self.pose_point_edges.keys():
-        #         self.pose_point_edges[frame_idx] = []
-        #     self.pose_point_edges[frame_idx].append(edge)
-
-    # Retrieving data
-    def remove_measurement(self, bad_measurements):
-        # Remove bad measurements from the BA graph
-        mappoint_count = {point_id: 0 for point_id in self.points.keys()}
-        for [frame_idx, point_id, point_2d] in bad_measurements:
-            mappoint_count[point_id] += 1
-            # logger.info((point_id, point_2d))
-            # logger.info(self.pose_point_map[frame_idx])
-            # logger.info((point_id, point_2d) in self.pose_point_map[frame_idx])
-            print((point_id, point_2d) in self.pose_point_map[frame_idx])
-            if (point_id, point_2d) in self.pose_point_map[frame_idx]:
-                self.pose_point_map[frame_idx].remove((point_id, point_2d))
-                # logger.info(f"Removed measurement {point_id} from frame {frame_idx}")
-        # for mappoint_id in self.points.keys():
-        #     if mappoint_count[mappoint_id] > 10:
-        #         # self.points.pop(mappoint_id)
-        #         logger.info(f"Removed mappoint {mappoint_id}")
             
             
     def get_previous_poses(self, n):
@@ -181,7 +130,7 @@ class SLAMStructure:
         # sorted_frames_idx = sorted(self.key_frames.keys())
         # self.key_frames = dict(sorted(self.key_frames.items()))
         poses = []
-        for frame in self.all_frames.values():
+        for frame in self.key_frames.values():
             pose = frame.pose.matrix()
             poses.append(pose)
         return poses 
@@ -241,11 +190,12 @@ class SLAMStructure:
     
     def filter_points(self, frame):
         local_mappoints = self.graph.get_local_map_v2(
-            [self.preceding, self.reference])[0]
-        points = []
-        for point in local_mappoints:
-            points.append(point.position)
-        can_view = frame.can_view(points)
+            [self.preceding, self.reference], window_size=12, loop_window_size=8)[0]
+        
+        # points = []
+        # for point in local_mappoints:
+            # points.append(point.position)
+        can_view = frame.can_view(local_mappoints)
         # print('filter points:', len(local_mappoints), 'can view',can_view.sum(), 
         #     'preceding map:', len(self.preceding.mappoints()),
         #     'reference map:', len(self.reference.mappoints()))
@@ -329,7 +279,7 @@ class SLAMStructure:
             visible_points[keyframe.idx] = [] 
 
         for mappoint in self.map_points.values():
-            visible_frames[mappoint.id] = []
+            visible_frames[mappoint.idx] = []
 
             if point_id not in reprojection_errors.keys():
                 continue
@@ -411,20 +361,20 @@ class SLAMStructure:
 
     def save_data(self, dataset, update_fps, tracking_fps, mapping_fps):
         self.exp_root.mkdir(parents=True, exist_ok=True)
-        
         # Dump class data as pickles (expect image data)
         mappoints_dict = {} #{id: (3d, color, descriptor)}
         for mappoint in self.map_points.values():
-            mappoints_dict[mappoint.id] = (mappoint.position, mappoint.color, mappoint.descriptor)
+            mappoints_dict[mappoint.idx] = (mappoint.position, mappoint.color, mappoint.descriptor)
         with open(self.exp_root / "mappoints.pickle", 'wb') as handle: 
             pickle.dump(mappoints_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
         
         keyframes_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose, intrinsic]}
         for keyframe in self.key_frames.values():
             keyframes_dict[keyframe.idx] = [keyframe.feature.keypoints_info, keyframe.pose.matrix(), keyframe.intrinsic]
+            # cv2.imwrite(str(self.exp_image_root / f"{keyframe.idx}.png"), keyframe.feature.image)
         with open(self.exp_root / "keyframes.pickle", 'wb') as handle:
             pickle.dump(keyframes_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        
+            
         frames_dict = {} #{frame_id: [{keypoints_id: (keypoints, descriptors)}, pose]}
         for frame in self.all_frames.values():
             frames_dict[frame.idx] = [frame.feature.keypoints_info, frame.pose.matrix()]
@@ -454,6 +404,37 @@ class SLAMStructure:
 
         print(f"Written data to {self.exp_root}")
 
+    def save_nerfStyle_data(self):
+        self.exp_nerfStyle_root.mkdir(parents=True, exist_ok=True)
+        image_root = self.exp_nerfStyle_root / 'train'
+        image_root.mkdir(parents=True, exist_ok=True)
+        for keyframe in self.key_frames.values():
+            cv2.imwrite(str(image_root / f"{keyframe.idx}.png"), keyframe.feature.image)
+        point_cloud_mean, point_cloud_std, scale = plot_points(self.exp_nerfStyle_root / 'points3d.ply', self)
+        self.save_json_poses(point_cloud_mean, point_cloud_std, scale)
+        
+    def save_json_poses(self, point_cloud_mean, point_cloud_std, scale):
+        frames = []
+        for keyframe in self.key_frames.values():
+            transform_matrix = keyframe.itransform_matrix.copy()
+            translation = transform_matrix[:3, 3]
+            t_normalized = ((translation - point_cloud_mean)/point_cloud_std) * scale
+            transform_matrix[:3, 3] = t_normalized
+            frame = {
+                "file_path": f"./train/{keyframe.idx}",
+                # "rotation": 0,  # replace with actual attribute
+                "transform_matrix": transform_matrix.tolist()  # replace with actual attribute
+            }
+            frames.append(frame)
+        data = {
+            "camera_angle_x": keyframe.hfov,  # replace with actual attribute
+            "frames": frames
+        }
+        with open(self.exp_nerfStyle_root /'transforms_train.json', 'w') as f:
+            json.dump(data, f, indent=4)
+        with open(self.exp_nerfStyle_root /'transforms_test.json', 'w') as f:
+            json.dump(data, f, indent=4)
+        
     def save_visualizations(self):
         self.visualization_root = self.exp_root / 'vis'
         self.visualization_root.mkdir(parents=True, exist_ok=True)
