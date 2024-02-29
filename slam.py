@@ -50,14 +50,14 @@ class SLAM:
         self.pose_guesser =  PoseGuesserLastPose()
         # Depth estimation component
         self.depth_estimator = DepthEstimatorConstant(args.depth_scale)
-        # self.depth_anything = DepthEstimatorDepthAnything(args.depth_network_model)
+        self.depth_anything = DepthEstimatorDepthAnything(args.depth_network_model)
         # Point sampling component
         self.point_sampler = PointResamplerR2D2(args.tracked_point_num_min, args.tracked_point_num_max, args.minimum_new_points)    
         # Point tracking component
         self.cotracker = CoTrackerPredictor(checkpoint="./trained_models/cotracker/"+args.cotracker_model+".pth").to(device=args.target_device)
         self.cotracker.eval()
         # Create tracking module
-        self.tracking_module = Tracking(self.depth_estimator, self.point_sampler, self.cotracker, args.target_device, args.cotracker_window_size, self.localBA, self.dataset)
+        self.tracking_module = Tracking([self.depth_estimator, self.depth_anything], self.point_sampler, self.cotracker, args.target_device, args.cotracker_window_size, self.localBA, self.dataset)
         # Create loop closure module
         self.loop_close_module = LoopClosureR2D2(self.cotracker, self.slam_structure, self.dataset, args.start_idx, args.end_idx)
         # Keyframe selection module
@@ -100,7 +100,9 @@ class SLAM:
             # update correspondences for each frame to slam_structure
             self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
                                             start_frame=0,
-                                            maximum_track_num=args.tracked_point_num_max)
+                                            maximum_track_num=args.tracked_point_num_max,
+                                            mapping=True,
+                                            initialize=True)
             
             # Force 1st frame to be keyframe
             if not self.slam_structure.current:
@@ -155,63 +157,6 @@ class SLAM:
             self.current_section = self.current_section[-1:]
             self.completed_sections += 1
             
-        # breakpoint()  
-                 
-    # def initialize(self):
-    #     print('Initializing map ...')
-    #     pose_0 = np.identity(4)
-    #     frame_0 = self.slam_structure.add_frame(frames_to_process[0], pose_0)
-    #     # depth_0 = self.depth_estimator(self.dataset[frame_0.idx]['image'], self.dataset[frame_0.idx]['mask']).squeeze().detach().cpu().numpy()
-    #     depth_0 = self.depth_anything(self.dataset[frame_0.idx]['image'], self.dataset[frame_0.idx]['mask']).squeeze().detach().cpu().numpy()
-
-    #     # Sample and unproject 1000 points for the first frame
-    #     _, new_points_2d, points_descriptor = self.point_sampler(frame_0, init=True)
-        
-    #     # # Iterate over each pixel of the image
-    #     # img = self.dataset[frame_0.idx]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
-    #     # height = img.shape[0]
-    #     # width = img.shape[1]
-
-    #     # # List to store the coordinates
-    #     # pixel_coordinates = []
-    #     # # Iterate over each row and column
-    #     # for row in range(0, height, 5):
-    #     #     for col in range(0, height, 5):
-    #     #         # Append the coordinates (row, col) to the list
-    #     #         pixel_coordinates.append((row, col))
-    #     # pixel_coordinates = np.vstack(pixel_coordinates)
-
-    #     # print(pixel_coordinates.shape)
-    #     # new_points_3d = frame_0.unproject(pixel_coordinates, depth_0)
-        
-    #     new_points_3d = frame_0.unproject(new_points_2d, depth_0)
-    #     # Add new points and correspondences to datastructure 
-    #     for i in range(len(new_points_3d)):
-    #         point_3d = new_points_3d[i, :3]
-    #         point_2d = new_points_2d[i]
-    #         point_descriptor = points_descriptor[i]
-    #         point_color = frame_0.get_color(point_2d)
-    #         mapPoint = self.slam_structure.add_mappoint(point_3d, point_color, point_descriptor) 
-    #         self.localBA.BA.add_point(mapPoint.id, point_3d)            
-    #         # update frame
-    #         frame_0.feature.keypoints_info[mapPoint.id] = (point_2d, point_descriptor)
-    #         frame_0.feature.update_keypoints_info()
-    #     # Add to keyframes
-    #     self.slam_structure.make_keyframe(frame_0.idx)
-    #     self.localBA.set_frame_data(frame_0.idx)
-    #     # Draw the first keyframe
-    #     frame_0.feature.draw_keypoints()
-    #     logger.info(f'map points:{len(self.slam_structure.map_points)}')
-    #     logger.info(f'total edges: {len(self.localBA.BA.active_edges())}')
-        
-    #     self.slam_structure.save_visualizations()
-    #     breakpoint()  
-        
-    #     # Update section
-    #     print("Map initizalized.")
-    #     self.current_section = self.current_section[-1:]
-    #     self.completed_sections += 1           
-    
     def localization(self):
         # If localization is enabled and map is initiallized, localize frame
         # if self.completed_sections > 0:
@@ -238,16 +183,18 @@ class SLAM:
                 current_frame = self.slam_structure.lc_frames[frame_idx]
                 # # update current frame
                 # self.slam_structure.current = current_frame
-                
-                # if len(current_frame.feature.keypoints) < 0.6 * self.args.localization_track_num:
-                #     # This allows to sample more points(start mapping) when the points lost are too many
-                #     self.need_sample = True
+                if len(current_frame.feature.keypoints) < 0.8 * self.args.localization_track_num:
+                    # This allows to sample more points(start mapping) when the points lost are too many
+                    self.need_sample = True
                     
-                # Localize frame with PnP
+                # # Localize frame with PnP
                 # localized_pose = self.slam_structure.localize_frame(current_frame, 
                 #                                                 update_pose=False,
                 #                                                 ransac=self.args.ransac_localization)
-                # print(f"Localized frame {current_frame.idx} with {localized_pose[:3,3]}")
+                # localized_pose = g2o.Isometry3d(localized_pose)
+                # self.motion_model.update_pose(
+                # current_frame.timestamp, localized_pose.position(), localized_pose.rotation())
+                # print(f"Localized frame {current_frame.idx} with {localized_pose.position()}")
                 self.slam_structure.lc_frames = {}
             
             # Tracking done and new update available
@@ -335,10 +282,18 @@ class SLAM:
         mapping_start_time = time.time()
         section_to_track = self.current_section.copy()
         print('section_to_map:', section_to_track)
+        
         # update correspondences for each frame to slam_structure
-        self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=True,
+        self.tracking_module.process_section(section_to_track, self.dataset, self.slam_structure, sample_new_points=self.need_sample,
                                         start_frame=0,
-                                        maximum_track_num=args.tracked_point_num_max)
+                                        maximum_track_num=args.tracked_point_num_max,
+                                        mapping=True)
+        
+        current_frame = self.slam_structure.all_frames[self.current_section[-1]]
+        if len(current_frame.feature.keypoints) < 0.4 * self.args.tracked_point_num_max:
+            self.need_sample = True
+        else:
+            self.need_sample = False
         # Decide to make frames into new keyframes
         for idx in self.current_section:
             # Keyframe decision, adding BA pose-point edges
@@ -398,7 +353,26 @@ class SLAM:
 
         # After loop closing, wait for a while to avoid the next loop closing
         self.loop_close_module.loop_coolDown = 100
-        
+    
+    def depth_anything_test(self):
+        from visualizations import plot_test_points
+        for frame_idx in tqdm(frames_to_process):
+            frame = slam.slam_structure.add_frame(frame_idx, np.identity(4))
+            depth_0 = self.depth_estimator(dataset[frame_idx]['image'], dataset[frame_idx]['mask']).squeeze().detach().cpu().numpy()
+            # Get image width and height
+            points_2d = []
+            for i in range(frame.feature.width):
+                for j in range(frame.feature.height):
+                    if i % 2 == 0 and j % 2 == 0:
+                        points_2d.append([i, j])
+            points_2d = np.vstack(points_2d)
+            points_3d = frame.unproject(points_2d, depth_0)
+            plot_test_points('points3d_depthmap.ply', points_3d)
+            if frame_idx >= 50:
+                breakpoint()
+            self.depth_estimator.visualize()
+            
+            
     def unitest(self):
           
         import pickle
@@ -524,6 +498,7 @@ if __name__ == "__main__":
 ###################################################################################################################
 slam = SLAM(dataset, args)
 
+# slam.depth_anything_test()
 # slam.unitest()
 # breakpoint()
 
@@ -535,10 +510,14 @@ for frame_idx in tqdm(frames_to_process):
     # if frame_idx in slam.slam_structure.all_frames.keys():
     #     continue
     # Add frame to slam structure
-    last_poses = slam.slam_structure.get_previous_poses(10)
-    pose = slam.pose_guesser(last_poses)
+    last_pose = slam.slam_structure.get_previous_poses(10)
+    # pose = slam.pose_guesser(last_pose)
+    pose = np.identity(4)
     # Add new frame
-    slam.slam_structure.add_frame(frame_idx, pose)
+    current_frame = slam.slam_structure.add_frame(frame_idx, pose)
+    slam.motion_model.update_pose(current_frame.timestamp, last_pose.position(), last_pose.rotation())
+    predicted_pose, _ = slam.motion_model.predict_pose(current_frame.timestamp)
+    current_frame.update_pose(predicted_pose)
     # Add frame to current section
     slam.current_section.append(frame_idx)
     # Run initialization
@@ -561,7 +540,7 @@ for frame_idx in tqdm(frames_to_process):
     # if not slam.need_sample:
         # logger.info(f'current_section: {slam.current_section}')
         continue
-    slam.need_sample = False
+    # slam.need_sample = False
     ###########################################################################################################
     #                                                   Mapping                                               #
     ###########################################################################################################
@@ -581,10 +560,14 @@ for frame_idx in tqdm(frames_to_process):
     #     # update BA with poses and points after PGO
     #     slam.localBA.update_ba_data()
     
-    if len(slam.slam_structure.all_frames) > 350:
-        break
+    # if len(slam.slam_structure.all_frames) > 350:
+    #     slam.slam_structure.filter_mappoints(5)
+    #     slam.slam_structure.save_colmapStyle_data()
+        # break
     if len(slam.slam_structure.key_frames) % 10 == 0:
-        slam.slam_structure.save_nerfStyle_data()
+        # slam.slam_structure.filter_mappoints(5)
+        # slam.slam_structure.save_colmapStyle_data()
+        # # slam.slam_structure.save_nerfStyle_data()
         slam.slam_structure.write_tum_poses(slam.slam_structure.exp_root / "poses_pred.txt")
         slam.slam_structure.write_full_tum_poses(slam.slam_structure.exp_root / "f_poses_pred.txt")
         
@@ -598,6 +581,8 @@ for frame_idx in tqdm(frames_to_process):
 # NOTE: ONLY FILTER AFTER EVERYTHING IS OPTIMIZED, DOES NOT UPDATE 
 # slam.slam_structure.filter(min_view_num=2, reprojection_error_threshold=10)
 try:
+    slam.slam_structure.filter_mappoints(5)
+    slam.slam_structure.save_colmapStyle_data()
     slam.slam_structure.save_visualizations()
 except:
     print("No visualizations to save.")

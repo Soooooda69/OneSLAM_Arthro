@@ -43,7 +43,7 @@ class SlamOptions:
                                 'constant: use constant depths'
                                 'luminosity: use brightness as initial depth guess'
                                 'depth_network: use pretrained depth estimation network')
-        parser.add_argument('--depth_scale',  default=1.0, type=float, help='scaling factor for depth esimates')
+        parser.add_argument('--depth_scale',  default=1, type=float, help='scaling factor for depth esimates')
         parser.add_argument("--depth_network_model", default="", type=str, help="path to depth network, only required for depth estimation using the network")
         parser.add_argument('--point_sampler', type=str, choices=['uniform', 'sift', 'orb', 'r2d2', 'density','akaze'], default='r2d2', 
                             help='how to sample new points at each section start'

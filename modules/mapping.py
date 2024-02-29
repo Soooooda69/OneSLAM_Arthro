@@ -175,10 +175,10 @@ class mapping:
         
         bad_ratio = len(bad_measurements)/count
         if bad_ratio < 0.9:
-            self.localBA.extract_ba_data()
+            pass
         else:
             logger.info(f'{self.keyframe_list[-1].idx} high bad ratio, aborting local BA')
-            
+        self.localBA.extract_ba_data()
         logger.info(f'Local BA info: bad:{len(bad_measurements)}, bad ratio:{len(bad_measurements)/(count+0.0001)}, total: {len(self.localBA.BA.active_edges())}, Window: {fix_idx}#{unfix_idx}#{fix2_idx}')
 
         # ###################################################################################

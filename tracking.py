@@ -6,6 +6,8 @@ import logging
 from DBoW.R2D2 import R2D2
 from optimizers import BundleAdjuster
 from misc.components import Frame, MapPoint, Camera
+from visualizations import *
+import statistics
 r2d2 = R2D2()
 logger = logging.getLogger('logfile.txt')
 
@@ -81,7 +83,8 @@ logger = logging.getLogger('logfile.txt')
 class Tracking:
     def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA, dataset) -> None:
         self.point_resampler = point_resampler
-        self.depth_estimator = depth_estimator
+        self.depth_estimator = depth_estimator[0]
+        self.depth_anything = depth_estimator[1]
         self.tracking_network = tracking_network
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
@@ -107,7 +110,9 @@ class Tracking:
     def process_section(self, section_indices, dataset, slam_structure, 
                     sample_new_points=True, 
                     start_frame=0, 
-                    maximum_track_num = None):        
+                    maximum_track_num = None,
+                    mapping=False,
+                    initialize=False):        
         # NOTE: This now only does the point tracking and does not add new keyframes or aquires new initial pose estimates 
         #       requires first frame to be present in poses
         # assert section_indices[start_frame] in slam_structure.visited_frames.keys()
@@ -125,8 +130,17 @@ class Tracking:
 
         # Point resampling process
         if sample_new_points:
-            depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
-            # self.depth_estimator.visualize()
+            if initialize:
+                depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
+            else:
+                mapPoint_depth = []
+                for mapPoint in slam_structure.map_points.values():
+                    mapPoint_depth.append(mapPoint.position[2])
+                self.depth_anything.multiplier = statistics.median(mapPoint_depth)
+                # print('mappoint mean depth:',statistics.median(mapPoint_depth))
+                depth_0 = self.depth_anything(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
+                self.depth_anything.save_depth(samples[start_frame]['frame_idx'])
+                # self.depth_estimator.visualize()
                 
             frame = slam_structure.all_frames[section_indices[start_frame]]
             
@@ -140,6 +154,9 @@ class Tracking:
                 print('new points sampled:', len(new_points_2d))
                 # Unproject new 2d samples
                 new_points_3d = frame.unproject(new_points_2d, depth_0)
+                
+                # print(depth_0)
+                # breakpoint()
                 # Add new points and correspondences to datastructure 
                 for i in range(len(new_points_3d)):
                     point_3d = new_points_3d[i, :3]
@@ -160,8 +177,6 @@ class Tracking:
             else:
                 # If no new points were sampled, add old points to current frame correspondences
                 print('no points sampled!')
-                # frame.feature.keypoints_info = slam_structure.all_frames[section_indices[start_frame]].feature.keypoints_info
-                # frame.feature.update_keypoints_info()
                 
         # Obtain currently tracked points on first frame
         # pose_points = slam_structure.get_pose_points(section_indices[start_frame])
@@ -265,8 +280,8 @@ class Tracking:
                     continue
                 
                 # Check if point has never gone out of focus
-                # visible = pred_visibility[0, :local_idx+1, i]
-                visible = pred_visibility[0, :len(section_indices), i]
+                visible = pred_visibility[0, :local_idx+1, i]
+                # visible = pred_visibility[0, :len(section_indices), i]
                 if not torch.all(visible):
                     continue
                 
@@ -275,8 +290,16 @@ class Tracking:
                 frame.feature.update_keypoints_info()
                 
         # Visualize tracking
-        if sample_new_points:
+        if mapping:
             for local_idx in range(start_frame, len(section_indices)):
                 frame_idx = section_indices[local_idx]
                 frame = slam_structure.all_frames[frame_idx]
                 frame.feature.draw_keypoints()
+                
+                mapPoint_depth = []
+                for mapPoint in slam_structure.map_points.values():
+                    mapPoint_depth.append(mapPoint.position[2])
+                self.depth_anything.multiplier = statistics.median(mapPoint_depth)
+                # print('mappoint mean depth:',statistics.median(mapPoint_depth))
+                depth_0 = self.depth_anything(dataset[frame_idx]['image'], dataset[frame_idx]['mask']).squeeze().detach().cpu().numpy()
+                self.depth_anything.save_depth(frame_idx)

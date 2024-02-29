@@ -117,3 +117,4 @@ class KeyframeSelectFeature(KeyframeSelect):
             # print('keyframe:', idx)
             self.setKeyframe(idx)
             self.make_keyframe = False
+        # self.setKeyframe(idx)

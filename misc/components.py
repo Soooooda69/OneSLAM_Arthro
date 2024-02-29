@@ -131,15 +131,13 @@ class Frame(object):
         x_d, y_d = points[:, 0], points[:, 1]
         fx, fy, cx, cy = self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy
 
-        depths = depth_image[y_d.astype(int), x_d.astype(int)]
+        depths = depth_image[x_d.astype(int), y_d.astype(int)]
         x = ((x_d - cx) * depths / fx)[:, None]
         y = ((y_d - cy) * depths / fy)[:, None]
         z = depths[:, None]
 
-        # points_3d = np.stack([x, y, z, np.ones_like(x)],  axis=-1).squeeze(axis=1)
         points_3d = np.stack([x, y, z], axis=1).reshape(3, -1)
         points_3d = self.itransform(points_3d).reshape(-1, 3)
-        
         return points_3d
         
     def find_matches(self, source, points, descriptors):

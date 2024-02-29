@@ -117,6 +117,9 @@ class DepthEstimatorDepthAnything(DepthEstimatorBase):
         self.depth = depth
         
         # depth = (depth - depth.min()) / (depth.max() - depth.min()) * self.multiplier
+        # print('Depth scale:', self.multiplier / depth.median())
+        depth = (depth * self.multiplier) / depth.median()
+        self.depth = depth
         # depth_cv = depth.cpu().numpy().astype(np.uint8)
         # depth_color = cv2.applyColorMap(depth_cv, cv2.COLORMAP_INFERNO)
         # combined_results = cv2.hconcat([cv_image, depth_color])
@@ -131,5 +134,8 @@ class DepthEstimatorDepthAnything(DepthEstimatorBase):
         combined_results = cv2.hconcat([self.cv_image, depth_color])
         cv2.imwrite(f'../datasets/temp_data/depth/{self.save_id}.png', combined_results)
         self.save_id += 1
-        
+    
+    def save_depth(self, frame_id):
+        depth = self.depth.cpu().numpy()
+        np.save(f'../datasets/temp_data/depth_npy/{frame_id}.npy', depth)
 # TODO: Wrapper for depth estimation network

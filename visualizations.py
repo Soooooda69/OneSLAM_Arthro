@@ -17,9 +17,15 @@ def plot_and_save_trajectory(
     show=False,
 ):
     pose_array = []
+    # change coordinate convention
     for keyframe in slam_structure.key_frames.values(): 
-        print(f'{keyframe.idx:08}:', keyframe.pose.matrix()[:3, 3])
-        pose_array.append(keyframe.pose.matrix())
+        pose = np.identity(4)
+        R = keyframe.pose.matrix()[:3, :3]
+        t = keyframe.pose.matrix()[:3, 3]
+        print(f'{keyframe.idx:08}:', t)
+        pose[:3, :3] = R
+        pose[:3, 3] = t
+        pose_array.append(pose)
     
     poses = pose_array
 
@@ -82,16 +88,11 @@ def plot_points(filepath, slam_structure):
     point_cloud = np.array(point_cloud)
     point_colors = (255 * np.array(point_colors)).astype(np.uint8)
     point_normals = np.zeros_like(point_cloud)
-
-    # Normalize the point cloud
-    point_cloud_mean = np.mean(point_cloud, axis=0)
-    point_cloud_std = np.std(point_cloud, axis=0)
-    point_cloud_normalized = ((point_cloud - point_cloud_mean) / point_cloud_std) * scale
-
-    point_cloud_normalized = pd.DataFrame({
-        'x': point_cloud_normalized[:, 0],
-        'y': point_cloud_normalized[:, 1],
-        'z': point_cloud_normalized[:, 2],
+    
+    point_cloud = pd.DataFrame({
+        'x': point_cloud[:, 0],
+        'y': point_cloud[:, 1],
+        'z': point_cloud[:, 2],
         'red': point_colors[:, 0],
         'green': point_colors[:, 1],
         'blue': point_colors[:, 2],
@@ -100,9 +101,36 @@ def plot_points(filepath, slam_structure):
         'nz': point_normals[:, 2]
     })
 
-    pynt_cloud = PyntCloud(point_cloud_normalized)
+    pynt_cloud = PyntCloud(point_cloud)
     pynt_cloud.to_file(str(filepath))
-    return point_cloud_mean, point_cloud_std, scale
+
+def plot_test_points(filepath, points_3d):
+    # Count number of point occurrences to avoid untriangulated points
+    point_cloud = []
+    point_colors = []
+    point_normals = []
+    for point_3d in points_3d:
+        point_cloud.append(point_3d)
+
+    point_cloud = np.array(point_cloud)
+    # point_colors = (255 * np.array([0.5,0.5,0.5])).astype(np.uint8)
+    point_normals = np.zeros_like(point_cloud)
+    
+    point_cloud = pd.DataFrame({
+        'x': point_cloud[:, 0],
+        'y': point_cloud[:, 1],
+        'z': point_cloud[:, 2],
+        'red': 255,
+        'green': 255,
+        'blue': 255,
+        'nx': point_normals[:, 0],
+        'ny': point_normals[:, 1],
+        'nz': point_normals[:, 2]
+    })
+
+    pynt_cloud = PyntCloud(point_cloud)
+    pynt_cloud.to_file(str(filepath))
+
     
 def visualize_point_correspondences(path, slam_structure, subsample_factor = 1):
     def get_color(id):
