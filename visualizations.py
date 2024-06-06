@@ -66,7 +66,6 @@ def plot_and_save_trajectory(
 
 def plot_points(filepath, slam_structure):
     # Count number of point occurrences to avoid untriangulated points
-    scale = 10
     counts = dict()
     for keyframe in slam_structure.key_frames.values():
         for point_id in keyframe.feature.keypoints_ids:

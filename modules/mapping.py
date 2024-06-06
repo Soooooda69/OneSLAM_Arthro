@@ -139,7 +139,7 @@ class mapping:
         # test new local BA optimizer for each new keyframe 
         fix_idx = []
         unfix_idx = []
-        fix2_idx = []
+        # fix2_idx = []
         for keyframe in self.keyframe_list[:-(self.local_ba_size+new_keyframe_counter)]:
             # self.localBA.BA.fix_pose(keyframe.idx, fixed=True)
             fix_idx.append(keyframe.idx)
@@ -165,9 +165,8 @@ class mapping:
         self.localBA.set_data(fix_idx, unfix_idx)
         # Remove bad measurements
         self.localBA.run_ba(opt_iters=tracking_ba_iterations)
-        bad_measurements = self.localBA.get_bad_measurements()
-        self.localBA.remove_bad_measurements()
-        
+        bad_measurements, bad_edges = self.localBA.get_bad_measurements()
+         
         count = 0
         for edge in self.localBA.edge_info:
             if edge[0] == self.keyframe_list[-1].idx:
@@ -175,11 +174,14 @@ class mapping:
         
         bad_ratio = len(bad_measurements)/count
         if bad_ratio < 0.9:
-            pass
+            self.localBA.remove_bad_measurements(bad_edges)
+            self.localBA.extract_ba_data()
+            logger.info(f'Local BA info: bad:{len(bad_measurements)}, bad ratio:{len(bad_measurements)/(count+0.0001)}, total: {len(self.localBA.BA.active_edges())}, Window: {fix_idx}#{unfix_idx}#')
         else:
-            logger.info(f'{self.keyframe_list[-1].idx} high bad ratio, aborting local BA')
-        self.localBA.extract_ba_data()
-        logger.info(f'Local BA info: bad:{len(bad_measurements)}, bad ratio:{len(bad_measurements)/(count+0.0001)}, total: {len(self.localBA.BA.active_edges())}, Window: {fix_idx}#{unfix_idx}#{fix2_idx}')
+            logger.info(f'{self.keyframe_list[-1].idx} high bad ratio, low quality tracking frames, aborting local BA.')
+            
+        # self.localBA.extract_ba_data()
+        # breakpoint()
 
         # ###################################################################################
         # # test covisibility graph
@@ -258,7 +260,6 @@ class mapping:
         self.localBA.remove_bad_measurements()
         
         self.localBA.extract_ba_data()
-
         frame_edges = {}
         for edge in self.localBA.edge_info:
             frame_idx = edge[0]

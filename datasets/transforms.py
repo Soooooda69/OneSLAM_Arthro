@@ -16,7 +16,8 @@ class SampleToTensor(object):
                 'intrinsics': torch.from_numpy(sample['intrinsics']).float(),
                 'mask': self.np_to_torch_image(sample['mask']).float(),
                 'pose': torch.from_numpy(sample['pose']).float(),
-                'depth': self.np_to_torch_image(sample['depth'])
+                'depth': self.np_to_torch_image(sample['depth']),
+                'distortion': torch.from_numpy(sample['distortion']).float()
                 }
 
 class MaskOutLuminosity(object):
@@ -39,7 +40,8 @@ class MaskOutLuminosity(object):
                 'intrinsics': sample['intrinsics'],
                 'mask': self.mask_out_luminosity(sample['image'], sample['mask']),
                 'pose': sample['pose'],
-                'depth': sample['depth']
+                'depth': sample['depth'],
+                'distortion': sample['distortion']
                 }
     
 
@@ -56,6 +58,7 @@ class SampleToDevice(object):
                 'mask': sample['mask'].to(self.device),
                 'pose': sample['pose'].to(self.device),
                 'depth': sample['depth'].to(self.device),
+                'distortion': sample['distortion'].to(self.device)
             }
 
   
@@ -87,7 +90,8 @@ class RescaleImages(object):
                 'intrinsics': self.adjust_intrinsics(sample['intrinsics'], sample['image'].shape),
                 'mask': mask_scaled,
                 'pose': sample['pose'], 
-                'depth': F.interpolate(sample['depth'][None, ...], size=local_target_size, mode='bilinear')[0, ...]
+                'depth': F.interpolate(sample['depth'][None, ...], size=local_target_size, mode='bilinear')[0, ...],
+                'distortion': sample['distortion']
             }
 
 
@@ -124,4 +128,5 @@ class CropImagesToMask(object):
                     'mask': sample['mask'][:,  self.crop_size[1]:self.crop_size[3], self.crop_size[0]:self.crop_size[2]],
                     'pose': sample['pose'], 
                     'depth': sample['depth'][:,  self.crop_size[1]:self.crop_size[3], self.crop_size[0]:self.crop_size[2]],
+                    'distortion': sample['intrinsics']
                 }

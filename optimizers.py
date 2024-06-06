@@ -272,8 +272,11 @@ class LocalBA:
                         self.slam_sturcture.pose_point_edges[frame_idx] = []
                     self.slam_sturcture.pose_point_edges[frame_idx].append(edge)
 
-    def remove_bad_measurements(self):
+    def remove_bad_measurements(self, bad_edges):
             count = 0
+            for edge in bad_edges:
+                edge.set_level(1)
+                
             for [frame_idx, point_id, point_2d] in self.bad_measurements:
                 for keyframe in self.slam_sturcture.key_frames.values():
                     if frame_idx == keyframe.idx:
@@ -285,13 +288,15 @@ class LocalBA:
 
     def get_bad_measurements(self):
         self.bad_measurements = []
+        bad_edges = []
         for edge in self.BA.active_edges():
             if edge.chi2() > self.huber_threshold:
                 #remove bad edges
                 # self.BA.remove_edge(edge)
-                edge.set_level(1)
+                # edge.set_level(1)
+                bad_edges.append(edge)
                 self.bad_measurements.append(self.edge_info[edge.id()])
-        return self.bad_measurements          
+        return self.bad_measurements, bad_edges  
                 
     def run_ba(self, opt_iters=None):
         if opt_iters is not None:
@@ -323,7 +328,12 @@ class LocalBA:
             if keyframe.idx*2 in self.BA.vertices():
                 keyframe.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
                 self.valid_frames.add(keyframe)
-            
+        
+        # for frame in self.slam_sturcture.all_frames.values():
+        #     if frame.idx*2 in self.BA.vertices():
+        #         frame.update_pose(self.BA.get_pose(keyframe.idx).matrix())      
+        #         # self.valid_frames.add(keyframe)
+         
         for mappoint in self.localMap:
             mappoint.update_position(self.BA.get_point(mappoint.idx))
             self.slam_sturcture.valid_points.add(mappoint.idx)
@@ -345,7 +355,7 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
         super().set_algorithm(solver)
         self.slam_structure = slam_structure
         self.visitedIDs = set()
-        
+           
     def optimize(self, max_iterations=20):
         super().initialize_optimization()
         super().optimize(max_iterations)
@@ -410,6 +420,38 @@ class PoseGraphOptimization(g2o.SparseOptimizer):
         #     self.add_edge((kf, kf2), measurement=meas)
         self.propagate(anchor)
     
+    def set_data(self, keyframes, loops):
+        super().clear()
+        keyframes = self.slam_structure.key_frames
+        anchor=None
+        for kf, *_ in loops:
+            if anchor is None or kf < anchor:
+                anchor = kf
+
+        for i, kf in enumerate(keyframes):
+            pose = g2o.Isometry3d(
+                kf.orientation,
+                kf.position)
+            
+            fixed = i == 0
+            if anchor is not None:
+                fixed = kf <= anchor
+            self.add_vertex(kf.id, pose, fixed=fixed)
+
+            if kf.preceding_keyframe is not None:
+                self.add_edge(
+                    vertices=(kf.preceding_keyframe.id, kf.id),
+                    measurement=kf.preceding_constraint)
+
+            if (kf.reference_keyframe is not None and
+                kf.reference_keyframe != kf.preceding_keyframe):
+                self.add_edge(
+                    vertices=(kf.reference_keyframe.id, kf.id),
+                    measurement=kf.reference_constraint)
+        
+        for kf, kf2, meas in loops:
+            self.add_edge((kf.id, kf2.id), measurement=meas)
+                           
     def propagate(self, ref_id):
         d = max(20, len(self.slam_structure.key_frames) * 0.1)
         propagator = SmoothEstimatePropagator(self, d)

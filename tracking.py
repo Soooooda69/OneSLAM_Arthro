@@ -11,80 +11,12 @@ import statistics
 r2d2 = R2D2()
 logger = logging.getLogger('logfile.txt')
 
-# TODO: Rename this to point tracking for more clarity.
-
-# # Helper functions (TODO: Relocate to misc.?)
-# def apply_transformation(T, point_cloud):
-#     try:
-#         for i in range(len(point_cloud)):
-#                 point_cloud[i] = T @ point_cloud[i]
-            
-#         return point_cloud
-#     except:
-#         breakpoint()
-
-# def unproject(points_2d, depth_image, cam_to_world_pose, intrinsics):
-#     # Unproject n 2d points
-#     # points: n x 2
-#     # depth_image: H x W
-#     # cam_pose: 4 x 4 
-
-#     x_d, y_d = points_2d[:, 0], points_2d[:, 1]
-#     fx, fy, cx, cy = intrinsics[0], intrinsics[1], intrinsics[2], intrinsics[3]
-
-#     depths = depth_image[y_d.astype(int), x_d.astype(int)]
-#     x = ((x_d - cx) * depths / fx)[:, None]
-#     y = ((y_d - cy) * depths / fy)[:, None]
-#     z = depths[:, None]
-
-#     points_3d = np.stack([x, y, z, np.ones_like(x)],  axis=-1).squeeze(axis=1)
-
-#     points_3d = apply_transformation(cam_to_world_pose, points_3d)
-
-#     return points_3d
-
-# def triangulatePoints(self, pose_0, next_pose, new_points_0, new_points_1):
-#         """Triangulates the feature correspondence points with
-#         the camera intrinsic matrix, rotation matrix, and translation vector.
-#         It creates projection matrices for the triangulation process."""
-#         # pose of the next frame
-#         R = next_pose[:3 ,:3]
-#         t = next_pose[:3 , 3].reshape(3,1)
-#         # The canonical matrix (set as the origin)
-#         P0 = np.array([[1, 0, 0, 0],
-#                        [0, 1, 0, 0],
-#                        [0, 0, 1, 0]])
-#         P0 = self.K.dot(P0)
-#         # Rotated and translated using P0 as the reference point
-#         P1 = np.hstack((R, t))
-#         P1 = self.K.dot(P1)
-#         new_points_0 = cv2.undistortPoints(new_points_0.astype(np.float64), self.K, None)
-#         new_points_1 = cv2.undistortPoints(new_points_1.astype(np.float64), self.K, None)
-#         # for i in range(curr_points.shape[1]):
-#         #     point_3d_homogeneous = cv2.triangulatePoints(P0, P1, curr_points, next_points)
-#         #     point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
-#         #     print(point_3d.shape())
-#         #     # print(i, point_3d_homogeneous.reshape(-1,4))
-#         #     # Minimal motion
-#         #     if point_3d_homogeneous[3,:] == 0:
-#         #         return None
-#         #     else:
-#         #         point_3d_homogeneous = point_3d_homogeneous/point_3d_homogeneous[3,:]
-#         #         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
-#         #         point3d.append(point_3d_homogeneous.reshape(-1,4)[:,:3])
-                
-#         point_3d_homogeneous = cv2.triangulatePoints(P0, P1, new_points_0, new_points_1)
-#         point_3d_homogeneous = pose_0 @ point_3d_homogeneous
-#         point_3d = cv2.convertPointsFromHomogeneous(point_3d_homogeneous.T)
-#         point_3d = point_3d.reshape((point_3d.shape[0], 3))
-#         # print('ppppppppppp',point_3d, t)
-#         return point_3d
 
 class Tracking:
     def __init__(self, depth_estimator, point_resampler, tracking_network, target_device, cotracker_window_size, BA, dataset) -> None:
         self.point_resampler = point_resampler
-        self.depth_estimator = depth_estimator[0]
-        self.depth_anything = depth_estimator[1]
+        self.depth_estimator = depth_estimator
+        # self.depth_anything = depth_estimator[1]
         self.tracking_network = tracking_network
         self.target_device = target_device
         self.cotracker_window_size = cotracker_window_size
@@ -106,6 +38,29 @@ class Tracking:
         self.optimizer.optimize(10)
         return self.optimizer.get_pose(0)
     
+    def save_allMapPoints(self, slam_structure):
+        mapPoint_list = []
+        for mappoint in slam_structure.map_points.values():
+            mapPoint_list.append(mappoint.position)
+        mapPoints = np.vstack(mapPoint_list).transpose() 
+        mapPoints = mapPoints.transpose()
+        # color = [255, 255, 255]
+        # image = current_frame.feature.image
+        # for x,y in keypoint_xys:
+        #     color.append(image[x.astype(int), y.astype(int)])
+        # color = np.vstack(color).astype(np.uint8)
+        point_cloud = pd.DataFrame({
+            'x': mapPoints[:, 0],
+            'y': mapPoints[:, 1],
+            'z': mapPoints[:, 2],
+            'red': 255,
+            'green': 255,
+            'blue': 255
+        })
+        pynt_cloud = PyntCloud(point_cloud)
+        pynt_cloud.to_file('maaaaaaaaaaaaaaaaaaaap.ply')
+        print('map saved')
+        
     # Point tracking done
     def process_section(self, section_indices, dataset, slam_structure, 
                     sample_new_points=True, 
@@ -130,42 +85,34 @@ class Tracking:
 
         # Point resampling process
         if sample_new_points:
-            if initialize:
-                depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
-            else:
-                mapPoint_depth = []
-                for mapPoint in slam_structure.map_points.values():
-                    mapPoint_depth.append(mapPoint.position[2])
-                self.depth_anything.multiplier = statistics.median(mapPoint_depth)
-                # print('mappoint mean depth:',statistics.median(mapPoint_depth))
-                depth_0 = self.depth_anything(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
-                self.depth_anything.save_depth(samples[start_frame]['frame_idx'])
-                # self.depth_estimator.visualize()
-                
+
+            depth_0 = self.depth_estimator(samples[start_frame]['image'], samples[-1]['mask']).squeeze().detach().cpu().numpy()
             frame = slam_structure.all_frames[section_indices[start_frame]]
-            
-            # local_mappoints = slam_structure.filter_points(frame)
-            # measurements = frame.match_mappoints(local_mappoints, Measurement.Source.TRACKING)
-            
+      
             # Resample points
             kept_pose_points, new_points_2d, points_descriptor = self.point_resampler(frame)
-            # print(len(new_points_2d))
-            if new_points_2d is not None:
-                print('new points sampled:', len(new_points_2d))
-                # Unproject new 2d samples
-                new_points_3d = frame.unproject(new_points_2d, depth_0)
+            
+            if new_points_2d is not None and len(new_points_2d) > 1:
+                # Undistort new points
+                # ud_points_2d = frame.cam.undistort_points(new_points_2d)
+                # new_points_2d = ud_points_2d.squeeze()
+                remove_indices = []
+                for idx, point_2d in enumerate(new_points_2d):
+                    if point_2d[0] < 0 or point_2d[1] < 0 \
+                        or point_2d[0] >= frame.cam.width or point_2d[1] >= frame.cam.height:
+                        remove_indices.append(idx)
+                new_points_2d = np.delete(new_points_2d, remove_indices, axis=0)
                 
-                # print(depth_0)
-                # breakpoint()
+                print('new points sampled:', len(new_points_2d))
+                
+                new_points_3d = frame.unproject(new_points_2d[:, [1, 0]], depth_0)
+                
                 # Add new points and correspondences to datastructure 
                 for i in range(len(new_points_3d)):
                     point_3d = new_points_3d[i, :3]
                     point_2d = new_points_2d[i]
                     point_descriptor = points_descriptor[i]
-                    # point_color = image_0[:, int(point_2d[1]), int(point_2d[0])]
                     point_color = frame.get_color(point_2d)
-                    # mapPoint = MapPoint(point_3d, point_descriptor, point_color)
-                    # slam_structure.map_points[mapPoint.id] = mapPoint
                     mapPoint = slam_structure.add_mappoint(point_3d, point_color, point_descriptor)
                     
                     # self.localBA.BA.add_point(mapPoint.id, point_3d)
@@ -179,13 +126,6 @@ class Tracking:
                 print('no points sampled!')
                 
         # Obtain currently tracked points on first frame
-        # pose_points = slam_structure.get_pose_points(section_indices[start_frame])
-        #     keypoints_info = slam_structure.all_frames[section_indices[start_frame]].feature.keypoints_info
-        # else:
-        #     if section_indices[start_frame] not in slam_structure.lc_frames.keys():
-        #         keypoints_info = slam_structure.all_frames[section_indices[start_frame]].feature.keypoints_info
-        #     else:
-        #         keypoints_info = slam_structure.lc_frames[section_indices[start_frame]].feature.keypoints_info
         keypoints_info = slam_structure.all_frames[section_indices[start_frame]].feature.keypoints_info
     
         if maximum_track_num is not None:
@@ -221,14 +161,6 @@ class Tracking:
                                                                 queries=queries,
                                                                 segm_mask=mask)
             
-            # # initialisation
-            # self.tracking_network(image_seq,queries=queries,is_first_step=True)
-            
-            # pred_tracks, pred_visibility = self.tracking_network(image_seq,
-            #                                                      queries=queries, 
-            #                                                     is_first_step=False,
-            #                                                     )
-            #print("Cotracker runtime: ", time.time()- current_time)
         # Add new correspondences
         for local_idx in range(start_frame+1, len(section_indices)):
             # Check if frame was duplicated
@@ -250,11 +182,6 @@ class Tracking:
             image = image.astype(np.uint8)
             
 
-            # instantiate frame and store in slam_structure
-            # assert frame_idx in slam_structure.all_frames.keys()
-            # print('frame_idx:', frame_idx, sample_new_points)
-            # cam = Camera(intrinsics)
-            # frame = Frame(frame_idx, np.identity(4), mask, image, cam)
             frame = slam_structure.all_frames[frame_idx]
             if not sample_new_points:
                 # cam = Camera(intrinsics)
@@ -294,12 +221,8 @@ class Tracking:
             for local_idx in range(start_frame, len(section_indices)):
                 frame_idx = section_indices[local_idx]
                 frame = slam_structure.all_frames[frame_idx]
-                frame.feature.draw_keypoints()
+                frame.feature.draw_keypoints('../data/temp_data/localize_tracking')
                 
-                mapPoint_depth = []
-                for mapPoint in slam_structure.map_points.values():
-                    mapPoint_depth.append(mapPoint.position[2])
-                self.depth_anything.multiplier = statistics.median(mapPoint_depth)
-                # print('mappoint mean depth:',statistics.median(mapPoint_depth))
-                depth_0 = self.depth_anything(dataset[frame_idx]['image'], dataset[frame_idx]['mask']).squeeze().detach().cpu().numpy()
-                self.depth_anything.save_depth(frame_idx)
+                # self.depth_anything(dataset[frame_idx]['image'], dataset[frame_idx]['mask'])
+                # self.depth_anything.save_disp(frame_idx)
+                # self.depth_anything.visualize(frame_idx)

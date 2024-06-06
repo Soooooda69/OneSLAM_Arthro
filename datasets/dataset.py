@@ -1,13 +1,12 @@
 import numpy as np
 from PIL import Image
 import cv2 as cv
-
 import torch
 from torch.utils.data import Dataset
 
 from pathlib import Path
 import json
-
+from natsort import natsorted
 from misc.tum_tools import read_trajectory
 
 class ImageDataset(Dataset):
@@ -16,8 +15,12 @@ class ImageDataset(Dataset):
 
         # Required data for predictions
         self.images = self.acquire_images()
-        self.cam_calibration = self.acquire_cam_calibration()
-        self.mask = self.acquire_mask()
+        try:
+            self.frame_masks = self.acquire_frame_masks()
+        except:
+            self.frame_masks = None
+            self.mask = self.acquire_mask()
+        self.cam_calibration, self.cam_distortion = self.acquire_cam_calibration()
         self.timestamps = self.acquire_timestamps()
         # Optional ground truth
         self.depths, self.depths_available = self.acquire_depths()
@@ -49,26 +52,36 @@ class ImageDataset(Dataset):
     
     def acquire_images(self):
         image_path = self.data_root / "images"
+        if not image_path.exists():
+            image_path = self.data_root / "undistort_images"
         #breakpoint()
         assert image_path.exists()
         assert image_path.is_dir()
 
-        image_path_list = sorted(list(image_path.glob('*.jpg')) + list(image_path.glob('*.png')))
+        image_path_list = natsorted(list(image_path.glob('*.jpg')) + list(image_path.glob('*.png')))
         image_dict = dict()
+        count = 0
         for path in image_path_list:
-            image_dict[int(str(path)[-12:-4])] = path
+            # image_dict[int(str(path)[-12:-4])] = path
+            image_dict[count] = path
+            count += 1
         return image_dict
     
     def acquire_cam_calibration(self):
-        cam_calibration_file = self.data_root / "calibration.json"
+        cam_calibration_file = self.data_root / "cam_params" / "calibration.json"
+        cam_distortion_file = self.data_root / "cam_params" / "distortion_coeff.json"
         assert cam_calibration_file.exists()
         assert cam_calibration_file.is_file()
-
+        assert cam_distortion_file.exists()
+        assert cam_distortion_file.is_file()
+        
         cam_calibration_data = None
-        with open(cam_calibration_file) as file:
+        cam_distortion_data = None
+        with open(cam_calibration_file) as file, open(cam_distortion_file) as distortion_file:
             cam_calibration_data = json.load(file)
-
-        return cam_calibration_data
+            cam_distortion_data = json.load(distortion_file)
+            
+        return cam_calibration_data, cam_distortion_data
     
     def acquire_mask(self):
         mask_path = self.data_root / "mask.bmp"
@@ -83,6 +96,21 @@ class ImageDataset(Dataset):
             mask = mask[..., 0]
 
         return mask[..., None]
+    
+    def acquire_frame_masks(self):
+        image_path = self.data_root / "masks"
+        #breakpoint()
+        assert image_path.exists()
+        assert image_path.is_dir()
+
+        image_path_list = natsorted(list(image_path.glob('*.jpg')) + list(image_path.glob('*.png')))
+        mask_dict = dict()
+        count = 0
+        for path in image_path_list:
+            # image_dict[int(str(path)[-12:-4])] = path
+            mask_dict[count] = path
+            count += 1
+        return mask_dict
     
     def acquire_depths(self):
         depth_path = self.data_root / "depths"
@@ -113,7 +141,11 @@ class ImageDataset(Dataset):
         image = np.array(Image.open(self.images[idx]))
         depth = np.zeros_like(image)[..., 0][..., None]
         pose = np.identity(4)
-        mask = 255*np.ones_like(image)[..., 0][..., None] if self.mask is None else self.mask
+        if self.frame_masks is not None:
+            mask = np.array(Image.open(self.frame_masks[idx]))[..., 0][..., None]
+        else:
+            mask = 255*np.ones_like(image)[..., 0][..., None] if self.mask is None else self.mask
+
         timestamp = self.timestamps[idx]
 
         if self.depths_available and idx in self.depths.keys():
@@ -126,8 +158,9 @@ class ImageDataset(Dataset):
 
 
         intrinisics = self.cam_calibration['intrinsics']
+        distortion = self.cam_distortion
         intrinisics_arr = np.array([intrinisics['fx'], intrinisics['fy'], intrinisics['cx'], intrinisics['cy']])
-
+        distortion = np.array([distortion['k1'], distortion['k2'], distortion['p1'], distortion['p2'], distortion['k3']])
         sample = {
             'frame_idx': idx,
             'timestamp': timestamp,
@@ -136,6 +169,7 @@ class ImageDataset(Dataset):
             'mask':mask,
             'pose':pose,
             'depth': depth,
+            'distortion': distortion
         }
 
         if self.transform:

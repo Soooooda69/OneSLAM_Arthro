@@ -7,25 +7,45 @@ from misc.covisibility import GraphKeyFrame
 from misc.covisibility import GraphMapPoint
 from misc.covisibility import GraphMeasurement
 from threading import Thread, Lock 
+import cv2
 
 class Camera(object):
-    def __init__(self, intrinsic, width=640, height=360):
+    def __init__(self, intrinsic, distortion, width, height):
         self.fx = intrinsic[0]
         self.fy = intrinsic[1]
         self.cx = intrinsic[2]
         self.cy = intrinsic[3]
-
+        self.k1 = distortion[0]
+        self.k2 = distortion[1]
+        self.p1 = distortion[2]
+        self.p2 = distortion[3]
+        self.k3 = distortion[4]
+        
         self.intrinsic_mtx = np.array([
             [self.fx, 0, self.cx], 
             [0, self.fy, self.cy], 
             [0, 0, 1]])
 
+        self.distortion = np.array([self.k1, self.k2, self.p1, self.p2, self.k3])
         self.frustum_near = 0.1
         self.frustum_far = 2
 
         self.width = width
         self.height = height
     
+    def undistort_points(self, points):
+        '''
+        Undistort points using camera's distortion parameters.
+        Args:
+            points: a list of points. shape: (N, 2)
+        Returns:
+            Undistorted points. shape: (N, 2)
+        '''
+        points = np.array(points, dtype=np.float32)
+        points = points.reshape(-1, 1, 2)
+        return cv2.undistortPoints(
+            points,
+            self.intrinsic_mtx, self.distortion, P=self.intrinsic_mtx)
 
 class Frame(object):
     def __init__(self, idx, pose, mask, image, cam, timestamp, 
@@ -84,7 +104,8 @@ class Frame(object):
         self.orientation = self.pose.orientation()  
         self.position = self.pose.position()
 
-        self.transform_matrix = self.pose.inverse().matrix()[:3]
+        self.transform_matrix = self.pose.inverse().matrix()
+        self.itransform_matrix = self.pose.matrix()
         self.projection_matrix = (
             self.cam.intrinsic_mtx.dot(self.transform_matrix[:3]))
 
@@ -96,8 +117,8 @@ class Frame(object):
         '''
         R = self.transform_matrix[:3, :3]
         t = self.transform_matrix[:3, 3]
-        return R.dot(points) + t[:, None]
-
+        return R @ points + t[:, None]
+    
     def itransform(self, points):   # from camera coordinates
         '''
         Transform points from camera coordinates frame to world frame.
@@ -106,7 +127,7 @@ class Frame(object):
         '''
         R = self.itransform_matrix[:3, :3]
         t = self.itransform_matrix[:3, 3]
-        return R.dot(points) + t[:, None]
+        return R @ points + t[:, None]
     
     def project(self, points): 
         '''
@@ -131,14 +152,16 @@ class Frame(object):
         x_d, y_d = points[:, 0], points[:, 1]
         fx, fy, cx, cy = self.cam.fx, self.cam.fy, self.cam.cx, self.cam.cy
 
+        # depths = depth_image[y_d.astype(int), x_d.astype(int)]
         depths = depth_image[x_d.astype(int), y_d.astype(int)]
         x = ((x_d - cx) * depths / fx)[:, None]
         y = ((y_d - cy) * depths / fy)[:, None]
         z = depths[:, None]
 
-        points_3d = np.stack([x, y, z], axis=1).reshape(3, -1)
-        points_3d = self.itransform(points_3d).reshape(-1, 3)
-        return points_3d
+        # points_3d = np.hstack([x, y, z]).transpose()
+        points_3d = np.hstack([y, x, z]).transpose()
+        return self.itransform(points_3d).transpose()
+        # return points_3d.transpose()
         
     def find_matches(self, source, points, descriptors):
         '''

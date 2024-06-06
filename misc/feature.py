@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from threading import Thread, Lock 
 from queue import Queue
 from DBoW.R2D2 import R2D2
+import os
 r2d2 = R2D2()
 
 
@@ -69,8 +70,11 @@ class ImageFeature(object):
 
         return np.vstack(kps_filtered), np.vstack(des_filtered)
         
-    def draw_keypoints(self):
-        
+    def draw_keypoints(self, draw_path):
+        img_save_path = os.path.join(draw_path,f'{self.idx}.png')
+        # print(img_save_path)
+        if os.path.exists(img_save_path):
+            return
         if len(self.image.shape) == 2:
             image = np.repeat(self.image[..., np.newaxis], 3, axis=2)
         else:
@@ -89,7 +93,7 @@ class ImageFeature(object):
         # self.ax.clear()
         # self.ax.imshow(img)
         # plt.pause(0.001)
-        cv2.imwrite(f'../datasets/temp_data/localize_tracking/{self.idx}.png', img)
+        cv2.imwrite(img_save_path, img)
         
     def find_matches(self, predictions, descriptors):
         '''

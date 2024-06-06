@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from misc.components import Frame
 import cv2
-
+import random
 from DBoW.R2D2 import R2D2
 r2d2 = R2D2()
 
@@ -303,21 +303,91 @@ class PointResamplerR2D2(PointResamplerBase):
         self.min_num_points = min_num_points
         self.min_new_points = min_new_points
         self.max_num_points = max_num_points
+        # Init density detection
+        self.grid_size = 50
+        self.grid_count = None
+        self.threshold = None
         # numbers of image points from r2d2
         # 2000 to give r2d2 good chances
         # self.num_points = 2000
         
+      
     def __call__(self, frame):
         points_to_sample = max(self.min_num_points - len(frame.feature.keypoints), self.min_new_points)
 
-        if len(frame.feature.keypoints) >= self.min_num_points:
+        if len(frame.feature.keypoints) >= self.max_num_points:
             return frame.feature.keypoints, None, None
         
         # image = np.transpose(frame.feature.image, (1, 2, 0))*255
         # image = image.astype(np.uint8)
-
+        
         current_pose_points = frame.feature.keypoints
         #  extract new features
         new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=True)
+        # dense detection
+        # points, des= self.density_detection(new_2d_points, frame)
+        # if len(points) > 0:
+        #     new_2d_points = np.vstack([new_2d_points, points])
+        #     new_points_descriptor = np.vstack([new_points_descriptor, des])
+        
         # keep limited number of features
         return current_pose_points, new_2d_points, new_points_descriptor
+
+    def density_detection(self, points, frame):
+        if self.grid_count is None:
+            image = frame.feature.image.copy()
+            h, w = image.shape[:2]
+            
+            # Create a grid and count points in each cell
+            self.grid_count = np.zeros((h // self.grid_size, w // self.grid_size), dtype=int)
+        
+        # points = frame.feature.keypoints
+        for point in points:
+            x, y = point
+            grid_x = int(x // self.grid_size)
+            grid_y = int(y // self.grid_size)
+            if grid_x >= self.grid_count.shape[1] or grid_y >= self.grid_count.shape[0]:
+                continue
+            self.grid_count[grid_y, grid_x] += 1
+            
+        if self.threshold is None:
+            # Define the threshold for low-density cells
+            self.threshold = np.mean(self.grid_count) / 2
+        
+        # Determine the number of points to sample based on the inverse of the density
+        new_points = []
+        dummy_des = []
+        for grid_y in range(self.grid_count.shape[0]):
+            for grid_x in range(self.grid_count.shape[1]):
+                density = self.grid_count[grid_y, grid_x]
+                if density < self.threshold:
+                    # Inverse proportional sampling: more points in less dense areas
+                    num_to_sample = int((self.threshold - density) / self.threshold * 10)  # Scale factor 10
+                    for _ in range(num_to_sample):
+                        new_x = random.randint(grid_x * self.grid_size, (grid_x + 1) * self.grid_size - 1)
+                        new_y = random.randint(grid_y * self.grid_size, (grid_y + 1) * self.grid_size - 1)
+                        new_points.append([new_x, new_y])
+                        dummy_des.append(np.zeros(128))
+        if len(new_points) > 0:
+            return np.vstack(new_points), np.vstack(dummy_des)
+        else:
+            return np.array([]), None
+        
+    def density_count(self, frame):
+        grid_size = 50
+        image = frame.feature.image.copy()
+        h, w = image.shape[:2]
+        
+        # Create a grid and count points in each cell
+        grid_count = np.zeros((h // self.grid_size, w // self.grid_size), dtype=int)
+    
+        for point in frame.feature.keypoints:
+            x, y = point
+            grid_x = int(x // grid_size)
+            grid_y = int(y // grid_size)
+            if grid_x >= grid_count.shape[1] or grid_y >= grid_count.shape[0]:
+                continue
+            grid_count[grid_y, grid_x] += 1
+        # Define the threshold for low-density cells
+        threshold = np.mean(grid_count)
+        return threshold

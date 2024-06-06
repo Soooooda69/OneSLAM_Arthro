@@ -17,10 +17,13 @@ import json
 import logging
 from itertools import chain
 from misc.components import Frame, Camera, KeyFrame, MapPoint, Measurement
+from sklearn.neighbors import NearestNeighbors
+
 logger = logging.getLogger('logfile.txt')
 
 from visualizations import *
 import numpy as np
+import pickle
 
 def mat_to_vecs(mat):
     trans_vec = mat[:3, 3]
@@ -66,12 +69,13 @@ class SLAMStructure:
     
     def add_frame(self, frame_idx, pose):
         intrinsic=self.dataset[frame_idx]['intrinsics'].detach().cpu().numpy()
+        distortion=self.dataset[frame_idx]['distortion'].detach().cpu().numpy()
         mask = self.dataset[frame_idx]['mask'].squeeze().detach().cpu().numpy()
         image = self.dataset[frame_idx]['image'].permute(1, 2, 0).detach().cpu().numpy()*255
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         timestamp = self.dataset[frame_idx]['timestamp']
         image = image.astype(np.uint8)
-        cam = Camera(intrinsic, mask.shape[1], mask.shape[0])
+        cam = Camera(intrinsic, distortion, image.shape[1], image.shape[0])
         frame = Frame(frame_idx, pose, mask, image, cam, timestamp)
         self.all_frames[frame_idx] = frame
         return frame
@@ -193,143 +197,140 @@ class SLAMStructure:
             frame.update_pose(localized_pose)
         return localized_pose
     
-    def filter_points(self, frame):
-        local_mappoints = self.graph.get_local_map_v2(
-            [self.preceding, self.reference], window_size=12, loop_window_size=8)[0]
+    # def filter_points(self, frame):
+    #     local_mappoints = self.graph.get_local_map_v2(
+    #         [self.preceding, self.reference], window_size=12, loop_window_size=8)[0]
         
-        # points = []
-        # for point in local_mappoints:
-            # points.append(point.position)
-        can_view = frame.can_view(local_mappoints)
-        # print('filter points:', len(local_mappoints), 'can view',can_view.sum(), 
-        #     'preceding map:', len(self.preceding.mappoints()),
-        #     'reference map:', len(self.reference.mappoints()))
+    #     # points = []
+    #     # for point in local_mappoints:
+    #         # points.append(point.position)
+    #     can_view = frame.can_view(local_mappoints)
+    #     # print('filter points:', len(local_mappoints), 'can view',can_view.sum(), 
+    #     #     'preceding map:', len(self.preceding.mappoints()),
+    #     #     'reference map:', len(self.reference.mappoints()))
         
-        checked = set()
-        filtered = []
-        for i in np.where(can_view)[0]:
-            pt = local_mappoints[i]
-            if pt.is_bad():
-                continue
-            pt.increase_projection_count()
-            filtered.append(pt)
-            checked.add(pt)
-        # print('checked:', len(checked))
-        for reference in set([self.preceding, self.reference]):
-            for pt in reference.mappoints():  # neglect can_view test
-                if pt in checked or pt.is_bad():
-                    continue
-                pt.increase_projection_count()
-                filtered.append(pt)
+    #     checked = set()
+    #     filtered = []
+    #     for i in np.where(can_view)[0]:
+    #         pt = local_mappoints[i]
+    #         if pt.is_bad():
+    #             continue
+    #         pt.increase_projection_count()
+    #         filtered.append(pt)
+    #         checked.add(pt)
+    #     # print('checked:', len(checked))
+    #     for reference in set([self.preceding, self.reference]):
+    #         for pt in reference.mappoints():  # neglect can_view test
+    #             if pt in checked or pt.is_bad():
+    #                 continue
+    #             pt.increase_projection_count()
+    #             filtered.append(pt)
 
-        return filtered
+    #     return filtered
     
 
-    # def filter(self, max_allowed_distance=None, reprojection_error_threshold=1000000, min_view_num=0):
-    #     """
-    #     Only retain points and correspondences that are 
-    #     - close to some camera pose
-    #     - visible on at least a minimum number of views
-    #     - have a low reprojection error
-    #     """
-    #     # TODO: DOES NOT UPDATE BA GRAPH, ONLY DICTS! Might have to construct a seperate BA graph for every optimization.
-    #     # TODO: Also filter correspondences in non-keyframes
-    #     eps = 1e-6
-    #     # Collect minimum cam distances for every point
-    #     # Collect reprojection_errors
-    #     reprojection_errors = dict()
-    #     min_depths = dict()
+    def filter(self, max_allowed_distance=None, reprojection_error_threshold=1000000, min_view_num=0):
+        """
+        Only retain points and correspondences that are 
+        - close to some camera pose
+        - visible on at least a minimum number of views
+        - have a low reprojection error
+        """
+        # TODO: DOES NOT UPDATE BA GRAPH, ONLY DICTS! Might have to construct a seperate BA graph for every optimization.
+        # TODO: Also filter correspondences in non-keyframes
+        eps = 1e-6
+        # Collect minimum cam distances for every point
+        # Collect reprojection_errors
+        reprojection_errors = dict()
+        min_depths = dict()
 
-    #     # for frame_idx in self.keyframes:
-    #     for keyframe in self.key_frames.values():
-    #         pose, intrinsics = keyframe.pose.matrix(), keyframe.intrinsic
-    #         frame_idx = keyframe.idx
-    #         # pose_points = self.pose_point_map[frame_idx]
-    #         world_to_cam = np.linalg.inv(pose)
-    #         intrinsics_mat = np.identity(3)
-    #         intrinsics_mat[0, 0] = intrinsics[0]
-    #         intrinsics_mat[1, 1] = intrinsics[1]
-    #         intrinsics_mat[0, 2] = intrinsics[2]
-    #         intrinsics_mat[1, 2] = intrinsics[3]
+        # for frame_idx in self.keyframes:
+        for keyframe in self.key_frames.values():
+            pose, intrinsics_mat = keyframe.pose.matrix(), keyframe.intrinsic_mtx
+            frame_idx = keyframe.idx
+            # pose_points = self.pose_point_map[frame_idx]
+            world_to_cam = np.linalg.inv(pose)
+            projection_mat = np.identity(4)[:3]
 
-    #         projection_mat = np.identity(4)[:3]
+            #breakpoint()
+            for (point_id, point_2d) in zip(keyframe.feature.keypoints_ids, keyframe.feature.keypoints):
+            # for (point_id, point_2d) in pose_points:
+                if point_id == -1:
+                    continue
+                point_3d = self.map_points[point_id].position
+                point_3d_homogenous = np.append(point_3d, 1)
 
-    #         #breakpoint()
-    #         for (point_id, point_2d) in zip(keyframe.feature.keypoints_ids, keyframe.feature.keypoints):
-    #         # for (point_id, point_2d) in pose_points:
-    #             point_3d = self.map_points[point_id].position
-    #             point_3d_homogenous = np.append(point_3d, 1)
-
-    #             point_2d_projected = intrinsics_mat @ projection_mat @ world_to_cam @ point_3d_homogenous
-    #             depth, point_2d_projected = point_2d_projected[2], point_2d_projected[:2]/(eps + point_2d_projected[2])
+                point_2d_projected = intrinsics_mat @ projection_mat @ world_to_cam @ point_3d_homogenous
+                depth, point_2d_projected = point_2d_projected[2], point_2d_projected[:2]/(eps + point_2d_projected[2])
                 
-    #             reprojection_error = np.linalg.norm(point_2d_projected - point_2d)
+                reprojection_error = np.linalg.norm(point_2d_projected - point_2d)
 
-    #             if point_id not in reprojection_errors.keys():
-    #                 reprojection_errors[point_id] = []
-    #                 min_depths[point_id] = 10000000
+                if point_id not in reprojection_errors.keys():
+                    reprojection_errors[point_id] = []
+                    min_depths[point_id] = 10000000
                 
-    #             reprojection_errors[point_id].append((frame_idx, reprojection_error, depth))
-    #             min_depths[point_id] = min(min_depths[point_id], depth)
+                reprojection_errors[point_id].append((frame_idx, reprojection_error, depth))
+                min_depths[point_id] = min(min_depths[point_id], depth)
         
-    #     # If maximum allowed distance not set, take double median distance
-    #     if max_allowed_distance is None:
-    #         max_allowed_distance = 2 * np.median(np.array(list(min_depths.values())))
+        # If maximum allowed distance not set, take double median distance
+        if max_allowed_distance is None:
+            max_allowed_distance = 2 * np.median(np.array(list(min_depths.values())))
 
-    #     # Find out which correspondences are valid
-    #     visible_frames = dict() # point_id => [frame_indices]
-    #     visible_points = dict() # frame_idx => [point_ids]
+        # Find out which correspondences are valid
+        visible_frames = dict() # point_id => [frame_indices]
+        visible_points = dict() # frame_idx => [point_ids]
 
-    #     for keyframe in self.key_frames.values():
-    #         visible_points[keyframe.idx] = [] 
+        for keyframe in self.key_frames.values():
+            visible_points[keyframe.idx] = [] 
 
-    #     for mappoint in self.map_points.values():
-    #         visible_frames[mappoint.idx] = []
+        for mappoint in self.map_points.values():
+            visible_frames[mappoint.idx] = []
 
-    #         if point_id not in reprojection_errors.keys():
-    #             continue
+            if mappoint.idx not in reprojection_errors.keys():
+                continue
 
-    #         if len(reprojection_errors[point_id]) < min_view_num:
-    #             continue
-    #         if min_depths[point_id] <= 0 or min_depths[point_id] > max_allowed_distance:
-    #             continue
+            if len(reprojection_errors[mappoint.idx]) < min_view_num:
+                continue
+            if min_depths[mappoint.idx] <= 0 or min_depths[mappoint.idx] > max_allowed_distance:
+                continue
             
                 
-    #         for (frame_idx, reprojection_error, depth) in reprojection_errors[point_id]:
-    #             if reprojection_error > reprojection_error_threshold:
-    #                 continue
+            for (frame_idx, reprojection_error, depth) in reprojection_errors[mappoint.idx]:
+                if reprojection_error > reprojection_error_threshold:
+                    continue
                 
-    #             visible_frames[point_id].append(frame_idx)
-    #             visible_points[frame_idx].append(point_id)
+                visible_frames[mappoint.idx].append(frame_idx)
+                visible_points[frame_idx].append(mappoint.idx)
         
-    #     filtered_corr_num = 0
-    #     # for frame_idx in self.keyframes:
-    #     for keyframe in self.key_frames.values():
-    #         if keyframe.idx not in self.key_frames.keys():
-    #         # if frame_idx not in self.pose_point_map.keys():
-    #             continue
+        # filtered_corr_num = 0
+        # # for frame_idx in self.keyframes:
+        # for keyframe in self.key_frames.values():
+        #     if keyframe.idx not in self.key_frames.keys():
+        #     # if frame_idx not in self.pose_point_map.keys():
+        #         continue
             
-    #         num_corr_before = len(keyframe.feature.keypoints)
-    #         filter_func = (lambda visible_points: (lambda pair: pair[0] in visible_points[frame_idx]))(visible_points)
-    #         self.pose_point_map[frame_idx] = list(filter(filter_func, self.pose_point_map[frame_idx]))
-    #         keyframe.feature.keypoints = list(filter(filter_func, keyframe.feature.keypoints))
+        #     num_corr_before = len(keyframe.feature.keypoints)
+        #     filter_func = (lambda visible_points: (lambda pair: pair[0] in visible_points[frame_idx]))(visible_points)
+        #     self.pose_point_map[frame_idx] = list(filter(filter_func, self.pose_point_map[frame_idx]))
+        #     keyframe.feature.keypoints = list(filter(filter_func, keyframe.feature.keypoints))
             
-    #         num_corr_after = len(self.pose_point_map[frame_idx])
+        #     num_corr_after = len(self.pose_point_map[frame_idx])
 
-    #         filtered_corr_num += num_corr_before - num_corr_after
+        #     filtered_corr_num += num_corr_before - num_corr_after
 
 
-    #     print(f"Filtered {filtered_corr_num} correspondences.")
+        # print(f"Filtered {filtered_corr_num} correspondences.")
 
-    #     filtered_point_num = 0
-    #     for point_id in visible_frames.keys():
-    #         if len(visible_frames[point_id]) > 0:
-    #             continue
-    #         self.points.pop(point_id)
-    #         filtered_point_num += 1
+        filtered_point_num = 0
+        for point_id in visible_frames.keys():
+            if len(visible_frames[point_id]) > 0:
+                continue
+            # self.points.pop(point_id)
+            del self.map_points[point_id]
+            filtered_point_num += 1
         
-    #     print(f"Filtered {filtered_point_num} points.")
-
+        print(f"Filtered {filtered_point_num} points.")
+    
     def filter_mappoints(self, min_view_num):
         # filter on only visibility
         filtered_point_num = 0
@@ -344,7 +345,7 @@ class SLAMStructure:
                 del self.map_points[mappoint.idx]
                 filtered_point_num += 1
                 continue
-        print(f"Filtered {filtered_point_num}/{len(self.map_points)} points.")
+        print(f"Filtered {filtered_point_num}/{len(map_points_copy)} points.")
         
     # Saving data + visualizations
     # TODO: Move to external functions?
@@ -411,7 +412,8 @@ class SLAMStructure:
 
         # Copy dataset
         self.exp_dataset_root = self.exp_root / 'dataset'
-        shutil.copytree(dataset.data_root, self.exp_dataset_root)
+        if not self.exp_dataset_root.exists():
+            shutil.copytree(dataset.data_root, self.exp_dataset_root)
 
         # Write info file
         with open(self.exp_root / "info.txt", 'w') as handle:
@@ -497,7 +499,20 @@ class SLAMStructure:
                         else:
                             f.write(f"{point2d[0][0]} {point2d[0][1]} {point2d[1]} ")
                     f.write("\n")
-                    
+        
+        def save_descriptors(desc_root):
+            desc_dict = {}
+            print('saving discriptors to colmap format...')
+            for keyframe in self.key_frames.values():
+                keypoint_idx = keyframe.feature.keypoints_ids
+                descriptors = keyframe.feature.descriptors
+                
+                for kpt_id, descriptor in zip(keypoint_idx, descriptors):
+                    desc_dict[kpt_id] = np.array(descriptor)
+                # Save the descriptors dictionary
+                with open(desc_root / f'{keyframe.idx}.pkl', 'wb') as f:
+                    pickle.dump(desc_dict, f)        
+            
         def save_points3d(sparse_root):
             '''
             # 3D point list with one line of data per point:
@@ -505,7 +520,8 @@ class SLAMStructure:
             '''
             print('saving points3D.txt to colmap format...')
             with open(sparse_root / 'points3D.txt', 'w') as f:
-                for mappoint in self.map_points.values():
+                map_points = self.map_points.copy()
+                for mappoint in map_points.values():
                     position = np.array(mappoint.position)
                     color = (255 * np.array(mappoint.color)).astype(np.uint8)
                     f.write(f"{mappoint.idx} {position[0]} {position[1]} {position[2]} {color[0]} {color[1]} {color[2]} 0.00 ")
@@ -514,21 +530,33 @@ class SLAMStructure:
                             continue
                         f.write(f"{keyframe.idx} {mappoint.idx} ")
                     f.write("\n")    
-                              
+
+                
         self.exp_colmapStyle_root.mkdir(parents=True, exist_ok=True)
         sparse_root = self.exp_colmapStyle_root /'sparse'/ '0'
         image_root = self.exp_colmapStyle_root / 'images'
+        disp_root = self.exp_colmapStyle_root / 'disp'
+        desc_root = self.exp_colmapStyle_root / 'descriptors'
         if sparse_root.exists():
             shutil.rmtree(sparse_root)
         sparse_root.mkdir(parents=True, exist_ok=True)
         if image_root.exists():
             shutil.rmtree(image_root)
         image_root.mkdir(parents=True, exist_ok=True)
+        if disp_root.exists():
+            shutil.rmtree(disp_root)
+        disp_root.mkdir(parents=True, exist_ok=True)
+        if desc_root.exists():
+            shutil.rmtree(desc_root)
+        desc_root.mkdir(parents=True, exist_ok=True)
+        
         for keyframe in self.key_frames.values():
             cv2.imwrite(str(image_root / f"{keyframe.idx}.png"), keyframe.feature.image)
         save_cameras(sparse_root)
         save_images(sparse_root)
         save_points3d(sparse_root)
+        # save_disp_maps(disp_root)
+        save_descriptors(desc_root)
         plot_points(self.exp_colmapStyle_root / 'points3d.ply', self)
         
     def save_visualizations(self):
@@ -536,7 +564,7 @@ class SLAMStructure:
         self.visualization_root.mkdir(parents=True, exist_ok=True)
 
         plot_points(self.visualization_root / 'points.ply', self)
-        plot_and_save_trajectory(self, save_name=str(self.visualization_root / 'trajectory.ply'))
+        plot_and_save_trajectory(self, axlen=0.1, save_name=str(self.visualization_root / 'trajectory.ply'))
 
 
         point_track_root = self.visualization_root / 'point_tracks'

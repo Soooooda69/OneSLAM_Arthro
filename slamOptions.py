@@ -10,7 +10,7 @@ class SlamOptions:
         parser.add_argument("--process_subset", action='store_true', help="use start_idx/end_idx/image_subsample to define a subset of processed frames in dataset")
         parser.add_argument("--start_idx", default=-1, type=int, help="starting frame index for processing")
         parser.add_argument("--end_idx", default=-1, type=int, help="end frame index for processing")
-        parser.add_argument("--image_subsample", default=-1, type=int, help="custom image subsample factor")
+        parser.add_argument("--image_subsample", default=1, type=int, help="custom image subsample factor")
         parser.add_argument("--img_width", default=-1, type=int, help="width to rescale images to, -1 for no scaling")
         parser.add_argument("--img_height", default=-1, type=int, help="height to rescale images to, -1 for no scaling")
         parser.add_argument("--lumen_mask_low_threshold", default=0.05, type=float, help="mask out pixels that are too dark")
@@ -26,8 +26,8 @@ class SlamOptions:
 
 
         # Stuff for tracking
-        parser.add_argument("--section_length", default=13, type=int, help="how many frames to buffer before running section point tracking")
-        parser.add_argument("--past_frame_size", default=5, type=int, help="how many past frames to include in point tracking")
+        parser.add_argument("--section_length", default=6, type=int, help="how many frames to buffer before running section point tracking")
+        parser.add_argument("--past_frame_size", default=3, type=int, help="how many past frames to include in point tracking")
         parser.add_argument('--keyframe_decision', type=str, choices=['subsample', 'orb'], default='subsample', 
                             help='How to make keyframe decision'
                                 'subsample: subsample every keyframe_subsample pose, default 4'
@@ -37,7 +37,7 @@ class SlamOptions:
                             help='how to obtain initial pose guess'
                                 'last_pose: use last pose as initial guess'
                                 'constant_velocity: use constant velocity model to obtain initial pose guess')
-        parser.add_argument("--gt_pose_path", default='', type=str, help="name of ground truth pose path, only required for gt_pose pose guesser")
+        # parser.add_argument("--gt_pose_path", default='', type=str, help="name of ground truth pose path, only required for gt_pose pose guesser")
         parser.add_argument('--depth_estimator', type=str, choices=['constant', 'luminosity', 'depth_network'], default='constant', 
                             help='how to obtain depth estimates for point projection'
                                 'constant: use constant depths'
@@ -67,7 +67,7 @@ class SlamOptions:
         # Stuff for BA
         parser.add_argument("--dense_ba", action='store_true', help="use dense instead of sparse bundle adjustment")
         parser.add_argument("--verbose_ba", action='store_true', help="output additional information for bundle adjustment")
-        parser.add_argument("--tracking_ba_iterations", default=20, type=int, help="number of ba iterations after tracking")
+        parser.add_argument("--tracking_ba_iterations", default=10, type=int, help="number of ba iterations after tracking")
         parser.add_argument("--local_ba_size", default=10, type=int, help="maximum number of keyframes to include in local BA, -1 to use all keyframes")
 
         # Parse arguments

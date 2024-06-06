@@ -30,7 +30,7 @@ class LoopClosureR2D2:
 		self.vis_save_path = '../datasets/temp_data/loop_detect'
 		# self.curr_loop_frame = None
 		# remake_vis_dir(self.vis_save_path)
-		# self.loops = []
+		self.loops = []
 		# self.num_loops = 0
 		self.loop_coolDown = 0
 		self.loop_mes_list = []
@@ -161,3 +161,14 @@ class LoopClosureR2D2:
 	# return loop_mes_list
 		# breakpoint()
 		return [ref_id, query_id, pose]
+
+	def loop_detect(self, frame_idx):
+		# detect loops for each frame
+		self.loop_coolDown -= 1
+		loop = self.find_loops(frame_idx) 
+		if loop is not None:
+			if loop[0] in self.slam_structure.key_frames.keys():
+				# self.loops.append(loop)
+				self.loops = loop
+				# logger.info(f'Detected loop: {self.loops[-1][1]} and {self.loops[-1][0]}')
+				logger.info(f'Detected loop: {self.loops[1]} and {self.loops[0]}')
