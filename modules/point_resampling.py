@@ -314,18 +314,21 @@ class PointResamplerR2D2(PointResamplerBase):
       
     def __call__(self, frame):
         points_to_sample = max(self.min_num_points - len(frame.feature.keypoints), self.min_new_points)
-
-        if len(frame.feature.keypoints) >= self.max_num_points:
+        # if len(frame.feature.keypoints) >= self.max_num_points:
+        #     return frame.feature.keypoints, None, None
+        if points_to_sample == 0:
             return frame.feature.keypoints, None, None
         
-        # image = np.transpose(frame.feature.image, (1, 2, 0))*255
-        # image = image.astype(np.uint8)
-        
         current_pose_points = frame.feature.keypoints
-        #  extract new features
-        new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=True)
-        # dense detection
-        # points, des= self.density_detection(new_2d_points, frame)
+        
+        if points_to_sample == self.min_num_points:
+            new_2d_points, new_points_descriptor = frame.feature.extract(points_to_sample, update=True)
+            self.threshold = self.density_count(frame)
+            print('Threshold:', self.threshold)
+        else:
+            # dense detection
+            new_2d_points, new_points_descriptor = self.density_sampling(frame, points_to_sample)
+            
         # if len(points) > 0:
         #     new_2d_points = np.vstack([new_2d_points, points])
         #     new_points_descriptor = np.vstack([new_points_descriptor, des])
@@ -333,15 +336,13 @@ class PointResamplerR2D2(PointResamplerBase):
         # keep limited number of features
         return current_pose_points, new_2d_points, new_points_descriptor
 
-    def density_detection(self, points, frame):
-        if self.grid_count is None:
-            image = frame.feature.image.copy()
-            h, w = image.shape[:2]
-            
-            # Create a grid and count points in each cell
-            self.grid_count = np.zeros((h // self.grid_size, w // self.grid_size), dtype=int)
+    def density_sampling(self, frame, points_to_sample):
+        image = frame.feature.image.copy()
+        h, w = image.shape[:2]
+        # Create a grid and count points in each cell
+        self.grid_count = np.zeros((h // self.grid_size, w // self.grid_size), dtype=int)
         
-        # points = frame.feature.keypoints
+        points = frame.feature.keypoints
         for point in points:
             x, y = point
             grid_x = int(x // self.grid_size)
@@ -360,14 +361,18 @@ class PointResamplerR2D2(PointResamplerBase):
         for grid_y in range(self.grid_count.shape[0]):
             for grid_x in range(self.grid_count.shape[1]):
                 density = self.grid_count[grid_y, grid_x]
+                # print('Density:', density)
                 if density < self.threshold:
                     # Inverse proportional sampling: more points in less dense areas
-                    num_to_sample = int((self.threshold - density) / self.threshold * 10)  # Scale factor 10
+                    num_to_sample = int(((self.threshold - density) / self.threshold) * 5)  # Scale factor 5
                     for _ in range(num_to_sample):
                         new_x = random.randint(grid_x * self.grid_size, (grid_x + 1) * self.grid_size - 1)
                         new_y = random.randint(grid_y * self.grid_size, (grid_y + 1) * self.grid_size - 1)
                         new_points.append([new_x, new_y])
                         dummy_des.append(np.zeros(128))
+                        if len(new_points) >= points_to_sample:
+                            break
+                        
         if len(new_points) > 0:
             return np.vstack(new_points), np.vstack(dummy_des)
         else:

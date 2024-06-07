@@ -193,9 +193,9 @@ class SLAM:
                     motion = np.linalg.norm(last_point - current_point)
                     intersection_motion.append(motion)
                 # This allows to sample more points(start mapping) when points motion are fast
-                if np.mean(intersection_motion) > 20 or \
-                    len(current_frame.feature.keypoints) < self.args.localization_track_num:
-                    self.need_sample = True
+                # if np.mean(intersection_motion) > 20 or \
+                #     len(current_frame.feature.keypoints) < self.args.localization_track_num:
+                #     self.need_sample = True
 
                 # # # update current frame
                 # # self.slam_structure.current = current_frame
@@ -399,7 +399,6 @@ slam = SLAM(dataset, args)
 
 
 for frame_idx in tqdm(frames_to_process):
-    
     # if frame_idx in slam.slam_structure.all_frames.keys():
     #     continue
     # Add frame to slam structure
@@ -425,7 +424,7 @@ for frame_idx in tqdm(frames_to_process):
     
     # slam.loop_detect(frame_idx)
     # If localization is enabled and map is initiallized, localize frame
-    # slam.loop_close_module.loop_detect(frame_idx)
+    slam.loop_close_module.loop_detect(frame_idx)
     slam.localization()
     
     # Check if frame buffer is full.

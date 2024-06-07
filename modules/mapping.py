@@ -173,13 +173,14 @@ class mapping:
                 count += 1
         
         bad_ratio = len(bad_measurements)/count
-        if bad_ratio < 0.9:
+        if bad_ratio < 1.2:
             self.localBA.remove_bad_measurements(bad_edges)
             self.localBA.extract_ba_data()
             logger.info(f'Local BA info: bad:{len(bad_measurements)}, bad ratio:{len(bad_measurements)/(count+0.0001)}, total: {len(self.localBA.BA.active_edges())}, Window: {fix_idx}#{unfix_idx}#')
         else:
-            logger.info(f'{self.keyframe_list[-1].idx} high bad ratio, low quality tracking frames, aborting local BA.')
-            
+            logger.info(f'{self.keyframe_list[-1].idx} high bad ratio {len(bad_measurements)}/{count}, low quality tracking frames, aborting local BA.')
+            self.localBA.remove_bad_measurements(bad_edges)
+            self.localBA.extract_ba_data()
         # self.localBA.extract_ba_data()
         # breakpoint()
 
@@ -256,8 +257,8 @@ class mapping:
         self.localBA.set_data(fix_idx, unfix_idx)
         # Remove bad measurements
         self.localBA.run_ba(opt_iters=10)
-        bad_measurements = self.localBA.get_bad_measurements()
-        self.localBA.remove_bad_measurements()
+        bad_measurements, bad_edges = self.localBA.get_bad_measurements()
+        self.localBA.remove_bad_measurements(bad_edges)
         
         self.localBA.extract_ba_data()
         frame_edges = {}
