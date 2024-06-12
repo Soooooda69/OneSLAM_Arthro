@@ -362,7 +362,7 @@ class PointResamplerR2D2(PointResamplerBase):
             for grid_x in range(self.grid_count.shape[1]):
                 density = self.grid_count[grid_y, grid_x]
                 # print('Density:', density)
-                if density < self.threshold:
+                if density == 0:
                     # Inverse proportional sampling: more points in less dense areas
                     num_to_sample = int(((self.threshold - density) / self.threshold) * 5)  # Scale factor 5
                     for _ in range(num_to_sample):

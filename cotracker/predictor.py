@@ -106,6 +106,9 @@ class CoTrackerPredictor(torch.nn.Module):
         assert B == 1
 
         video = video.reshape(B * T, C, H, W)
+        # mean pooling over time
+        video = torch.mean(video, dim=1, keepdim=True)
+        video = video.repeat(1, 3, 1, 1)
         video = F.interpolate(video, tuple(self.interp_shape), mode="bilinear")
         video = video.reshape(B, T, 3, self.interp_shape[0], self.interp_shape[1])
 

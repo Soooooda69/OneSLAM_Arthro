@@ -107,7 +107,7 @@ class KeyframeSelectFeature(KeyframeSelect):
                 intersection_motion.append(motion)
             
             # print('intersection_motion:', np.mean(intersection_motion))
-            if np.mean(intersection_motion) > 10:
+            if np.mean(intersection_motion) > 10 and self.keyframe_cooldown <= 0:
                 self.make_keyframe = True
                 
             # if self.jaccard_similarity(tracked_point_ids, last_point_ids) < self.similar_threshold and self.keyframe_cooldown <= 0:

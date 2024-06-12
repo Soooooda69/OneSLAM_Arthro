@@ -193,10 +193,10 @@ class SLAM:
                     motion = np.linalg.norm(last_point - current_point)
                     intersection_motion.append(motion)
                 # This allows to sample more points(start mapping) when points motion are fast
-                # if np.mean(intersection_motion) > 20 or \
-                #     len(current_frame.feature.keypoints) < self.args.localization_track_num:
-                #     self.need_sample = True
-
+                if np.mean(intersection_motion) > 20 or \
+                    len(current_frame.feature.keypoints) < self.args.localization_track_num:
+                    self.need_sample = True
+                
                 # # # update current frame
                 # # self.slam_structure.current = current_frame
                 # if len(current_frame.feature.keypoints) < 0.4 * self.args.localization_track_num:
@@ -366,7 +366,7 @@ if __name__ == "__main__":
 
     composed_transforms = transforms.Compose([SampleToTensor(),
                                             RescaleImages((args.img_height, args.img_width)),
-                                            MaskOutLuminosity(threshold_high=args.lumen_mask_high_threshold, threshold_low=args.lumen_mask_low_threshold),
+                                            # MaskOutLuminosity(threshold_high=args.lumen_mask_high_threshold, threshold_low=args.lumen_mask_low_threshold),
                                             SampleToDevice(args.target_device)])
     dataset = ImageDataset(args.data_root, transform=composed_transforms)
     # Determine frames to process

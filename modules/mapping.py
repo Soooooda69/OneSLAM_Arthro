@@ -132,7 +132,7 @@ class mapping:
      
     def local_BA(self, tracking_ba_iterations, new_keyframe_counter):
          # If there are new keyframes, run local BA
-        ba_size = 3*self.local_ba_size
+        ba_size = 2*self.local_ba_size
         self.slam_structure.key_frames = dict(sorted(self.slam_structure.key_frames.items()))
         self.keyframe_list = list(self.slam_structure.key_frames.values())
         ###################################################################################

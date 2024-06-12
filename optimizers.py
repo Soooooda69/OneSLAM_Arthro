@@ -297,7 +297,17 @@ class LocalBA:
                 bad_edges.append(edge)
                 self.bad_measurements.append(self.edge_info[edge.id()])
         return self.bad_measurements, bad_edges  
+    
+    def re_optimize(self, bad_edges):
+        for edge in bad_edges:
+            edge.set_level(1)
+        
+        for edge in self.BA.active_edges():
+            edge.set_level(0)
+        self.BA.optimize(self.BA_opt_iters)    
+        
                 
+              
     def run_ba(self, opt_iters=None):
         if opt_iters is not None:
             self.BA.optimize(opt_iters)
